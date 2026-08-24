@@ -14,6 +14,14 @@
     background:#e74c3c; color:#fff; border:none; font-size:14px;
   }
   .fb-btn:hover { background:#c0392b; }
+  /* 顶部「意见」按钮：低调描边样式，不抢眼 */
+  #openFb {
+    background:transparent;
+    border:1px solid rgba(255,255,255,.35);
+    color:#cdd6e0;
+    font-size:13px; padding:5px 14px;
+  }
+  #openFb:hover { background:rgba(255,255,255,.1); color:#fff; }
   .tabs { display:flex; gap:10px; margin-left:auto; }
   .tab { padding:8px 18px; border-radius:6px; cursor:pointer; background:#34495e; color:#fff; border:none; font-size:14px; }
   .tab.active { background:#e74c3c; }
@@ -279,7 +287,7 @@ document.getElementById('fbSubmit').addEventListener('click', async () => {
       fbErr.textContent = data.msg || '提交失败';
     }
   } catch (e) {
-    fbErr.textContent = '网络错误，请稍后重试';
+    fbErr.textContent = '提交失败：无法连接服务器，请确认后端接口 /api/index.php 已部署可访问';
   } finally {
     btn.disabled = false; btn.textContent = '提交';
   }
