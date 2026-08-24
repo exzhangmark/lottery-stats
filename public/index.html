@@ -9,6 +9,11 @@
   body { margin:0; font-family:"Microsoft YaHei",sans-serif; background:#f5f6fa; color:#333; }
   header { background:#2c3e50; color:#fff; padding:14px 20px; display:flex; gap:12px; align-items:center; }
   header h1 { font-size:18px; margin:0; }
+  .fb-btn {
+    margin-left:14px; padding:6px 16px; border-radius:6px; cursor:pointer;
+    background:#e74c3c; color:#fff; border:none; font-size:14px;
+  }
+  .fb-btn:hover { background:#c0392b; }
   .tabs { display:flex; gap:10px; margin-left:auto; }
   .tab { padding:8px 18px; border-radius:6px; cursor:pointer; background:#34495e; color:#fff; border:none; font-size:14px; }
   .tab.active { background:#e74c3c; }
@@ -32,21 +37,24 @@
   .red-num { color:#c0392b; font-weight:bold; }
   .blue-num { color:#2471a3; font-weight:bold; }
   .loading { color:#888; padding:30px; text-align:center; }
-  /* 主体布局：左侧彩票统计，右侧意见栏 */
-  .main { display:flex; gap:16px; align-items:flex-start; }
-  .lottery-area { flex:1 1 auto; min-width:0; }
-  .feedback-area {
-    flex:0 0 320px; width:320px; background:#fff; border-radius:8px;
-    box-shadow:0 1px 3px rgba(0,0,0,.1); padding:14px; position:sticky; top:14px;
-    max-height:calc(100vh - 90px); display:flex; flex-direction:column;
+  /* 意见抽屉：默认隐藏，点击按钮从右侧滑出 */
+  .drawer-mask {
+    position:fixed; inset:0; background:rgba(0,0,0,.35); display:none; z-index:900;
   }
+  .drawer-mask.show { display:block; }
+  .feedback-area {
+    position:fixed; top:0; right:0; height:100vh; width:340px; max-width:90vw;
+    background:#fff; box-shadow:-4px 0 16px rgba(0,0,0,.2); z-index:901;
+    display:flex; flex-direction:column; padding:14px; transform:translateX(100%);
+    transition:transform .25s ease;
+  }
+  .feedback-area.show { transform:translateX(0); }
   .feedback-head { display:flex; align-items:center; justify-content:space-between; margin-bottom:10px; }
   .feedback-head h2 { font-size:15px; margin:0; color:#2c3e50; }
-  .fb-btn {
-    background:#e74c3c; color:#fff; border:none; border-radius:6px;
-    padding:6px 14px; cursor:pointer; font-size:13px;
+  .fb-close {
+    background:none; border:none; font-size:20px; color:#999; cursor:pointer; line-height:1;
   }
-  .fb-btn:hover { background:#c0392b; }
+  .fb-close:hover { color:#333; }
   .fb-list { overflow-y:auto; flex:1 1 auto; }
   .fb-item { border-bottom:1px solid #f0f0f0; padding:8px 2px; }
   .fb-item .fb-meta { font-size:12px; color:#999; margin-bottom:3px; display:flex; justify-content:space-between; }
@@ -82,6 +90,7 @@
 <body>
 <header>
   <h1>彩票开奖统计</h1>
+  <button class="fb-btn" id="openFb">意见</button>
   <div class="tabs">
     <button class="tab active" data-type="ssq">福利双色球</button>
     <button class="tab" data-type="dlt">体彩大乐透</button>
@@ -110,16 +119,17 @@
         <tbody id="dlt-list"><tr><td colspan="4" class="loading">加载中...</td></tr></tbody></table>
     </section>
   </div>
-
-  <!-- 右侧意见栏 -->
-  <aside class="feedback-area">
-    <div class="feedback-head">
-      <h2>意见反馈</h2>
-      <button class="fb-btn" id="openFb">反馈</button>
-    </div>
-    <div class="fb-list" id="fbList"><div class="fb-empty">加载中...</div></div>
-  </aside>
 </div>
+
+<!-- 遮罩 + 意见抽屉（默认隐藏，点击「意见」按钮滑出） -->
+<div class="drawer-mask" id="fbMask"></div>
+<aside class="feedback-area" id="fbDrawer">
+  <div class="feedback-head">
+    <h2>意见反馈</h2>
+    <button class="fb-close" id="fbClose">&times;</button>
+  </div>
+  <div class="fb-list" id="fbList"><div class="fb-empty">加载中...</div></div>
+</aside>
 
 <!-- 反馈弹窗 -->
 <div class="modal-mask" id="fbModal">
@@ -225,7 +235,24 @@ async function loadFeedback() {
 function openModal() { fbErr.textContent = ''; fbModal.classList.add('show'); fbContent.focus(); }
 function closeModal() { fbModal.classList.remove('show'); fbNick.value=''; fbContent.value=''; fbErr.textContent=''; }
 
-document.getElementById('openFb').addEventListener('click', openModal);
+const fbDrawer = document.getElementById('fbDrawer');
+const fbMask   = document.getElementById('fbMask');
+let fbLoaded = false;
+
+function openDrawer() {
+  fbDrawer.classList.add('show');
+  fbMask.classList.add('show');
+  if (!fbLoaded) { loadFeedback(); fbLoaded = true; }  // 首次打开才加载列表
+}
+function closeDrawer() {
+  fbDrawer.classList.remove('show');
+  fbMask.classList.remove('show');
+}
+
+document.getElementById('openFb').addEventListener('click', openDrawer);
+document.getElementById('fbClose').addEventListener('click', closeDrawer);
+fbMask.addEventListener('click', closeDrawer);
+
 document.getElementById('fbCancel').addEventListener('click', closeModal);
 fbModal.addEventListener('click', e => { if (e.target === fbModal) closeModal(); });
 
@@ -252,9 +279,6 @@ document.getElementById('fbSubmit').addEventListener('click', async () => {
     btn.disabled = false; btn.textContent = '提交';
   }
 });
-
-// 首次加载意见列表
-loadFeedback();
 </script>
 </body>
 </html>
