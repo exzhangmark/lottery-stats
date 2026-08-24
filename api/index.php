@@ -57,4 +57,40 @@ if ($action === 'stats') {
     exit;
 }
 
+// ---------- 意见：列表 ----------
+if ($action === 'feedback_list') {
+    $stmt = $pdo->prepare("SELECT id, nickname, content, created_at FROM feedback ORDER BY id DESC LIMIT 100");
+    $stmt->execute();
+    $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
+    echo json_encode(['code' => 1, 'data' => $rows]);
+    exit;
+}
+
+// ---------- 意见：提交（POST）----------
+if ($action === 'feedback_add') {
+    if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
+        echo json_encode(['code' => 405, 'msg' => '请使用 POST 提交']);
+        exit;
+    }
+    $ip = $_SERVER['REMOTE_ADDR'] ?? 'unknown';
+    // 1) 速率限制：每 IP 60 秒内最多 3 条
+    if (feedbackRateLimited($ip)) {
+        echo json_encode(['code' => 429, 'msg' => '提交过于频繁，请稍后再试']);
+        exit;
+    }
+    // 2) 内容校验与清洗
+    $nickname = $_POST['nickname'] ?? '';
+    $content  = $_POST['content']  ?? '';
+    $errors   = sanitizeFeedback($nickname, $content);
+    if ($errors) {
+        echo json_encode(['code' => 422, 'msg' => implode('；', $errors)]);
+        exit;
+    }
+    // 3) 参数化写入（防 SQL 注入）
+    $stmt = $pdo->prepare("INSERT INTO feedback (nickname, content, ip) VALUES (?,?,?)");
+    $stmt->execute([$nickname ?: '匿名', $content, $ip]);
+    echo json_encode(['code' => 1, 'msg' => '感谢反馈，已入库']);
+    exit;
+}
+
 echo json_encode(['code' => 400, 'msg' => 'action 参数错误']);

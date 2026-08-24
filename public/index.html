@@ -32,6 +32,51 @@
   .red-num { color:#c0392b; font-weight:bold; }
   .blue-num { color:#2471a3; font-weight:bold; }
   .loading { color:#888; padding:30px; text-align:center; }
+  /* 主体布局：左侧彩票统计，右侧意见栏 */
+  .main { display:flex; gap:16px; align-items:flex-start; }
+  .lottery-area { flex:1 1 auto; min-width:0; }
+  .feedback-area {
+    flex:0 0 320px; width:320px; background:#fff; border-radius:8px;
+    box-shadow:0 1px 3px rgba(0,0,0,.1); padding:14px; position:sticky; top:14px;
+    max-height:calc(100vh - 90px); display:flex; flex-direction:column;
+  }
+  .feedback-head { display:flex; align-items:center; justify-content:space-between; margin-bottom:10px; }
+  .feedback-head h2 { font-size:15px; margin:0; color:#2c3e50; }
+  .fb-btn {
+    background:#e74c3c; color:#fff; border:none; border-radius:6px;
+    padding:6px 14px; cursor:pointer; font-size:13px;
+  }
+  .fb-btn:hover { background:#c0392b; }
+  .fb-list { overflow-y:auto; flex:1 1 auto; }
+  .fb-item { border-bottom:1px solid #f0f0f0; padding:8px 2px; }
+  .fb-item .fb-meta { font-size:12px; color:#999; margin-bottom:3px; display:flex; justify-content:space-between; }
+  .fb-item .fb-content { font-size:13px; color:#333; word-break:break-word; white-space:pre-wrap; }
+  .fb-empty { color:#aaa; text-align:center; padding:24px 0; font-size:13px; }
+  /* 弹窗 */
+  .modal-mask {
+    position:fixed; inset:0; background:rgba(0,0,0,.45); display:none;
+    align-items:center; justify-content:center; z-index:999;
+  }
+  .modal-mask.show { display:flex; }
+  .modal {
+    background:#fff; border-radius:10px; width:380px; max-width:92vw; padding:18px;
+    box-shadow:0 8px 24px rgba(0,0,0,.25);
+  }
+  .modal h3 { margin:0 0 12px; font-size:16px; color:#2c3e50; }
+  .modal label { display:block; font-size:13px; color:#555; margin:8px 0 4px; }
+  .modal input, .modal textarea {
+    width:100%; border:1px solid #ddd; border-radius:6px; padding:8px;
+    font-size:13px; font-family:inherit; box-sizing:border-box;
+  }
+  .modal textarea { resize:vertical; min-height:90px; }
+  .modal .err { color:#e74c3c; font-size:12px; min-height:16px; margin-top:4px; }
+  .modal-actions { display:flex; gap:10px; justify-content:flex-end; margin-top:14px; }
+  .modal-actions button {
+    padding:7px 16px; border-radius:6px; border:none; cursor:pointer; font-size:13px;
+  }
+  .btn-cancel { background:#ecf0f1; color:#333; }
+  .btn-submit { background:#e74c3c; color:#fff; }
+  .btn-submit:hover { background:#c0392b; }
 </style>
 </head>
 <body>
@@ -43,25 +88,54 @@
   </div>
 </header>
 
-<section class="panel active" id="panel-ssq">
-  <div class="section-title">红球出现次数（1-33）</div>
-  <div class="balls" id="ssq-red"></div>
-  <div class="section-title">蓝球出现次数（1-16）</div>
-  <div class="balls" id="ssq-blue"></div>
-  <div class="section-title">开奖列表</div>
-  <table><thead><tr><th>期号</th><th>红球</th><th>蓝球</th><th>开奖时间</th></tr></thead>
-    <tbody id="ssq-list"><tr><td colspan="4" class="loading">加载中...</td></tr></tbody></table>
-</section>
+<div class="main">
+  <div class="lottery-area">
+    <section class="panel active" id="panel-ssq">
+      <div class="section-title">红球出现次数（1-33）</div>
+      <div class="balls" id="ssq-red"></div>
+      <div class="section-title">蓝球出现次数（1-16）</div>
+      <div class="balls" id="ssq-blue"></div>
+      <div class="section-title">开奖列表</div>
+      <table><thead><tr><th>期号</th><th>红球</th><th>蓝球</th><th>开奖时间</th></tr></thead>
+        <tbody id="ssq-list"><tr><td colspan="4" class="loading">加载中...</td></tr></tbody></table>
+    </section>
 
-<section class="panel" id="panel-dlt">
-  <div class="section-title">红球出现次数（1-35）</div>
-  <div class="balls" id="dlt-red"></div>
-  <div class="section-title">蓝球出现次数（1-12）</div>
-  <div class="balls" id="dlt-blue"></div>
-  <div class="section-title">开奖列表</div>
-  <table><thead><tr><th>期号</th><th>红球</th><th>蓝球</th><th>开奖时间</th></tr></thead>
-    <tbody id="dlt-list"><tr><td colspan="4" class="loading">加载中...</td></tr></tbody></table>
-</section>
+    <section class="panel" id="panel-dlt">
+      <div class="section-title">红球出现次数（1-35）</div>
+      <div class="balls" id="dlt-red"></div>
+      <div class="section-title">蓝球出现次数（1-12）</div>
+      <div class="balls" id="dlt-blue"></div>
+      <div class="section-title">开奖列表</div>
+      <table><thead><tr><th>期号</th><th>红球</th><th>蓝球</th><th>开奖时间</th></tr></thead>
+        <tbody id="dlt-list"><tr><td colspan="4" class="loading">加载中...</td></tr></tbody></table>
+    </section>
+  </div>
+
+  <!-- 右侧意见栏 -->
+  <aside class="feedback-area">
+    <div class="feedback-head">
+      <h2>意见反馈</h2>
+      <button class="fb-btn" id="openFb">反馈</button>
+    </div>
+    <div class="fb-list" id="fbList"><div class="fb-empty">加载中...</div></div>
+  </aside>
+</div>
+
+<!-- 反馈弹窗 -->
+<div class="modal-mask" id="fbModal">
+  <div class="modal">
+    <h3>提交意见</h3>
+    <label>昵称（选填，最多 30 字）</label>
+    <input type="text" id="fbNick" maxlength="30" placeholder="匿名">
+    <label>内容（必填，最多 500 字）</label>
+    <textarea id="fbContent" maxlength="500" placeholder="请输入您的意见或建议..."></textarea>
+    <div class="err" id="fbErr"></div>
+    <div class="modal-actions">
+      <button class="btn-cancel" id="fbCancel">取消</button>
+      <button class="btn-submit" id="fbSubmit">提交</button>
+    </div>
+  </div>
+</div>
 
 <script>
 const apiBase = '/api/index.php';
@@ -115,6 +189,72 @@ document.querySelectorAll('.tab').forEach(btn => {
 // 默认加载双色球
 loadModule('ssq');
 loaded['ssq'] = true;
+
+// ---------- 意见反馈 ----------
+const fbModal   = document.getElementById('fbModal');
+const fbList    = document.getElementById('fbList');
+const fbNick    = document.getElementById('fbNick');
+const fbContent = document.getElementById('fbContent');
+const fbErr     = document.getElementById('fbErr');
+
+// HTML 转义，防止 XSS
+function esc(s) {
+  return String(s).replace(/[&<>"']/g, c => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+  }[c]));
+}
+
+async function loadFeedback() {
+  try {
+    const res  = await fetch(`${apiBase}?action=feedback_list`);
+    const data = await res.json();
+    if (data.code === 1 && data.data.length) {
+      fbList.innerHTML = data.data.map(f => `
+        <div class="fb-item">
+          <div class="fb-meta"><span>${esc(f.nickname || '匿名')}</span><span>${esc(f.created_at || '')}</span></div>
+          <div class="fb-content">${esc(f.content)}</div>
+        </div>`).join('');
+    } else {
+      fbList.innerHTML = '<div class="fb-empty">暂无意见，快来抢沙发～</div>';
+    }
+  } catch (e) {
+    fbList.innerHTML = '<div class="fb-empty">加载失败</div>';
+  }
+}
+
+function openModal() { fbErr.textContent = ''; fbModal.classList.add('show'); fbContent.focus(); }
+function closeModal() { fbModal.classList.remove('show'); fbNick.value=''; fbContent.value=''; fbErr.textContent=''; }
+
+document.getElementById('openFb').addEventListener('click', openModal);
+document.getElementById('fbCancel').addEventListener('click', closeModal);
+fbModal.addEventListener('click', e => { if (e.target === fbModal) closeModal(); });
+
+document.getElementById('fbSubmit').addEventListener('click', async () => {
+  const content = fbContent.value.trim();
+  if (!content) { fbErr.textContent = '内容不能为空'; return; }
+  const btn = document.getElementById('fbSubmit');
+  btn.disabled = true; btn.textContent = '提交中...';
+  try {
+    const fd = new FormData();
+    fd.append('nickname', fbNick.value.trim());
+    fd.append('content', content);
+    const res  = await fetch(`${apiBase}?action=feedback_add`, { method: 'POST', body: fd });
+    const data = await res.json();
+    if (data.code === 1) {
+      closeModal();
+      await loadFeedback();
+    } else {
+      fbErr.textContent = data.msg || '提交失败';
+    }
+  } catch (e) {
+    fbErr.textContent = '网络错误，请稍后重试';
+  } finally {
+    btn.disabled = false; btn.textContent = '提交';
+  }
+});
+
+// 首次加载意见列表
+loadFeedback();
 </script>
 </body>
 </html>
