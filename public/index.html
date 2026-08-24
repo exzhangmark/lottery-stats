@@ -60,6 +60,8 @@
   .fb-item .fb-meta { font-size:12px; color:#999; margin-bottom:3px; display:flex; justify-content:space-between; }
   .fb-item .fb-content { font-size:13px; color:#333; word-break:break-word; white-space:pre-wrap; }
   .fb-empty { color:#aaa; text-align:center; padding:24px 0; font-size:13px; }
+  .fb-add { margin-top:10px; width:100%; padding:10px; border:none; border-radius:6px; background:#e74c3c; color:#fff; font-size:14px; cursor:pointer; }
+  .fb-add:hover { background:#c0392b; }
   /* 弹窗 */
   .modal-mask {
     position:fixed; inset:0; background:rgba(0,0,0,.45); display:none;
@@ -129,6 +131,7 @@
     <button class="fb-close" id="fbClose">&times;</button>
   </div>
   <div class="fb-list" id="fbList"><div class="fb-empty">加载中...</div></div>
+  <button class="fb-btn fb-add" id="openFbModal">我要反馈</button>
 </aside>
 
 <!-- 反馈弹窗 -->
@@ -252,6 +255,8 @@ function closeDrawer() {
 document.getElementById('openFb').addEventListener('click', openDrawer);
 document.getElementById('fbClose').addEventListener('click', closeDrawer);
 fbMask.addEventListener('click', closeDrawer);
+// 抽屉内的「我要反馈」按钮 → 打开提交弹窗
+document.getElementById('openFbModal').addEventListener('click', openModal);
 
 document.getElementById('fbCancel').addEventListener('click', closeModal);
 fbModal.addEventListener('click', e => { if (e.target === fbModal) closeModal(); });

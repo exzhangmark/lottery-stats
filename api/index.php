@@ -5,7 +5,7 @@
  * 通过 ?action=list&type=ssq 或 ?action=stats&type=ssq 调用。
  */
 
-require_once __DIR__ . '/../worker/lottery_worker.php';  // 复用 db() 等工具函数
+require_once __DIR__ . '/../db.php';  // 数据库与意见相关函数（不依赖 Workerman）
 
 header('Content-Type: application/json; charset=utf-8');
 header('Access-Control-Allow-Origin: *');
