@@ -11,10 +11,13 @@
 ## 目录结构
 ```
 lottery-stats/
-├── api/index.php          # HTTP 数据接口（list / stats）
+├── api/index.php          # HTTP 数据接口（list / stats / feedback）
+├── lib.php                # 公共抓取/解析库（不依赖 Workerman，被 worker 与 backfill 共用）
+├── db.php                 # 公共数据层（PDO+SQLite，含意见表与防攻击）
 ├── worker/
-│   └── lottery_worker.php # Workerman 抓取 Worker（双 API 容错 + 失败 1h 重试）
-├── public/index.html      # 前端展示页（双色球 / 大乐透 双板块）
+│   ├── lottery_worker.php # Workerman 抓取 Worker（多源容错 + 失败 1h 重试）
+│   └── backfill.php       # 历史开奖数据回填脚本（一次性/按需）
+├── public/index.html      # 前端展示页（双色球 / 大乐透 双板块 + 意见反馈抽屉）
 ├── data/                  # SQLite 数据库（自动生成，已 gitignore）
 ├── deploy/
 │   ├── nginx.conf         # Nginx 配置示例
@@ -23,12 +26,14 @@ lottery-stats/
 └── README.md
 ```
 
-## 数据来源（两个免费 API，互为备份）
-1. 主用：<http://api.huiniao.top> — `lotteryHistory?type=ssq|dlt`
-2. 备用：<https://www.caipiaodate.com> — `void.do?code=ssq|dlt`
+## 数据来源
+按优先级依次尝试，**任一成功即采用**：
+1. **主用（福彩官方）**：<https://www.cwl.gov.cn> — `findDrawNotice?name=ssq`（仅福利彩票，覆盖双色球）
+2. **备用 1**：<http://api.huiniao.top> — `lotteryHistory?type=ssq|dlt`
+3. **备用 2**：<https://www.caipiaodate.com> — `void.do?code=ssq|dlt`
 
-抓取策略：依次尝试主用 / 备用 API，任一成功即写入；若两个都失败，则 **1 小时后自动重试**。
-正常轮询间隔 10 分钟。
+> 说明：福彩官网不含体彩大乐透，故大乐透实际主源为 huiniao，cwl 自动跳过回退。
+> 任一源抓取失败则顺延下一个；全部失败则 **1 小时后自动重试**。正常轮询间隔 10 分钟。
 
 ## 部署步骤
 
@@ -42,6 +47,26 @@ composer install
 php worker/lottery_worker.php start
 # 守护进程： php worker/lottery_worker.php start -d
 ```
+
+### 2.5 历史开奖数据回填（可选，一次性）
+若想一次性补齐某日期以来的全部历史开奖（例如上线前补 2026 年至今），运行回填脚本：
+```bash
+# 回填 2026-01-01 至今（双色球 + 大乐透）
+php worker/backfill.php
+
+# 自定义起始日期
+php worker/backfill.php --since=2025-01-01
+
+# 只回填双色球
+php worker/backfill.php --type=ssq
+```
+脚本行为：
+- 对每个彩种选定「第一个能返回数据」的数据源，沿该源分页向后翻（最新 → 最早）。
+- 每翻一页随机休眠 **3~5 秒**，模拟正常访问速度，避免被接口限流。
+- 仅写入 `open_time >= 起始日期` 的记录；按 `(type, issue)` 去重，重复期号自动忽略。
+- 当某页「最新一期」已早于起始日期时自动停止。
+
+> 依赖 `php_pdo_sqlite` 扩展（与前端接口一致）。
 
 ### 3. 配置 Nginx（参考 deploy/nginx.conf）
 将 `root` 指向项目 `public` 目录，PHP 请求转发到 PHP-FPM（9000 端口）。

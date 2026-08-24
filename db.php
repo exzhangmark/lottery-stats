@@ -10,7 +10,7 @@ function db()
 {
     static $pdo;
     if ($pdo) return $pdo;
-    $dbFile = __DIR__ . '/../data/lottery.sqlite';
+    $dbFile = __DIR__ . '/data/lottery.sqlite';
     $dir = dirname($dbFile);
     if (!is_dir($dir)) mkdir($dir, 0777, true);
     $pdo = new PDO('sqlite:' . $dbFile);
