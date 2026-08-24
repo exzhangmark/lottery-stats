@@ -12,15 +12,24 @@ use Workerman\Timer;
 
 // ---------- 配置 ----------
 $CONFIG = [
-    // 两个免费 API（互为备份）
+    // 数据源（按数组顺序作为优先级：任一成功即采用，全部失败才 1 小时后重试）
+    // 主源：福彩官网 cwl.gov.cn（仅覆盖福利彩票，如双色球；不含体彩大乐透）
+    // 备用：huiniao、caipiaodate（两者均覆盖双色球与大乐透，负责兜底）
     'apis' => [
-        'primary' => [
+        'official' => [
+            'name' => 'cwl.gov.cn',
+            'ssq'  => 'https://www.cwl.gov.cn/cwl_admin/front/cwlkj/search/kjxx/findDrawNotice?name=ssq&currentPage=1&pageSize=20',
+            'dlt'  => null,   // 福彩官网不含体彩大乐透，自动跳过，回退备用源
+            'parse' => 'parseCwl',
+            'headers' => ['Referer: http://www.cwl.gov.cn/'],
+        ],
+        'backup1' => [
             'name' => 'huiniao',
             'ssq'  => 'http://api.huiniao.top/interface/home/lotteryHistory?type=ssq&page=1&limit=20',
             'dlt'  => 'http://api.huiniao.top/interface/home/lotteryHistory?type=dlt&page=1&limit=20',
             'parse' => 'parseHuiniao',
         ],
-        'backup' => [
+        'backup2' => [
             'name' => 'caipiaodate',
             'ssq'  => 'https://www.caipiaodate.com/foregroundPCController/void.do?code=ssq&rows=20&format=json',
             'dlt'  => 'https://www.caipiaodate.com/foregroundPCController/void.do?code=dlt&rows=20&format=json',
@@ -35,14 +44,15 @@ $CONFIG = [
 require_once __DIR__ . '/../db.php';
 
 // ---------- 抓取 ----------
-function httpGet($url, $timeout = 8)
+function httpGet($url, $timeout = 8, $extraHeaders = [])
 {
     $ch = curl_init($url);
+    $headers = array_merge(['User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'], $extraHeaders);
     curl_setopt_array($ch, [
         CURLOPT_RETURNTRANSFER => true,
         CURLOPT_TIMEOUT        => $timeout,
         CURLOPT_CONNECTTIMEOUT => $timeout,
-        CURLOPT_USERAGENT      => 'Mozilla/5.0 (compatible; LotteryFetcher/1.0)',
+        CURLOPT_HTTPHEADER     => $headers,
         CURLOPT_SSL_VERIFYPEER => false,
         CURLOPT_SSL_VERIFYHOST => false,
     ]);
@@ -79,6 +89,46 @@ function parseHuiniao($json, $type)
             'red'       => implode(',', array_map('intval', $red)),
             'blue'      => implode(',', array_map('intval', $blue)),
             'open_time' => $item['open_time'] ?? null,
+        ];
+    }
+    return $rows;
+}
+
+// 解析 福彩官网 cwl.gov.cn 返回（官方源，仅福彩）
+// 典型结构：{"state":0,"message":"success","result":{"result":[{ "code":"2026097","openCode":"05,16,24,26,29,30+02","openTime":"2026-08-23 21:15:00", ... }]}}
+function parseCwl($json, $type)
+{
+    if (!isset($json['state']) || (string)$json['state'] !== '0') {
+        // 部分返回可能无 state 字段，容错继续
+    }
+    // 兼容多层 result 嵌套或直接数组
+    $inner = $json['result'] ?? $json;
+    $list  = $inner['result'] ?? $inner;
+    if (!is_array($list)) return false;
+    if (isset($list['code']) || isset($list['expect'])) $list = [$list]; // 单条
+    if (empty($list)) return false;
+    $rows = [];
+    foreach ($list as $item) {
+        $issue = $item['code'] ?? $item['expect'] ?? null;
+        // 优先用 openCode（"红球,...,红球+蓝球"），其次 red/blue 字段
+        $red  = [];
+        $blue = [];
+        if (isset($item['openCode']) && $item['openCode'] !== '') {
+            $parts = explode('+', str_replace('|', '+', $item['openCode']));
+            $red   = explode(',', $parts[0]);
+            $blue  = isset($parts[1]) ? explode(',', $parts[1]) : [];
+        } elseif (isset($item['red']) && isset($item['blue'])) {
+            $red   = is_array($item['red'])   ? $item['red']   : explode(',', $item['red']);
+            $blue  = is_array($item['blue'])  ? $item['blue']  : explode(',', $item['blue']);
+        }
+        $red   = array_map('intval', array_filter($red));
+        $blue  = array_map('intval', array_filter($blue));
+        if (!$issue || empty($red)) continue;
+        $rows[] = [
+            'issue'     => $issue,
+            'red'       => implode(',', $red),
+            'blue'      => implode(',', $blue),
+            'open_time' => $item['openTime'] ?? $item['open_time'] ?? $item['date'] ?? null,
         ];
     }
     return $rows;
@@ -127,13 +177,18 @@ function saveRows($type, $rows)
     return $count;
 }
 
-// 抓取单个彩种（遍历 API 列表，任一成功即可）
+// 抓取单个彩种（按优先级遍历 API 列表，任一成功即可；缺该彩种 URL 的源自动跳过）
 function fetchLottery($type)
 {
     global $CONFIG;
     foreach ($CONFIG['apis'] as $api) {
-        $url = $api[$type];
-        $body = httpGet($url);
+        $url = $api[$type] ?? null;
+        if (empty($url)) {
+            echo date('Y-m-d H:i:s') . " [{$type}] {$api['name']} 不含该彩种，跳过\n";
+            continue;
+        }
+        $headers = $api['headers'] ?? [];
+        $body = httpGet($url, 10, $headers);
         if ($body === false) {
             echo date('Y-m-d H:i:s') . " [{$type}] {$api['name']} 请求失败\n";
             continue;
