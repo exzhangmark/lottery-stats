@@ -37,6 +37,14 @@ lottery-stats/
 
 ## 部署步骤
 
+### 方式一：一键部署脚本（推荐，Ubuntu/Debian）
+在服务器上以 root 执行：
+```bash
+curl -sSL https://raw.githubusercontent.com/exzhangmark/lottery-stats/master/deploy/setup.sh | sudo bash
+```
+脚本会自动：安装 nginx/php/php-sqlite3 → 安装 Composer → 克隆代码 → 配置 PHP-FPM(9000) → 配置 Nginx → **回填 2026-01-01 至今开奖数据** → 启动常驻抓取 Worker，最后打印访问入口（默认 `http://服务器IP/`）。
+
+### 方式二：手动部署
 ### 1. 安装依赖
 ```bash
 composer install
@@ -69,8 +77,8 @@ php worker/backfill.php --type=ssq
 > 依赖 `php_pdo_sqlite` 扩展（与前端接口一致）。
 
 ### 3. 配置 Nginx（参考 deploy/nginx.conf）
-将 `root` 指向项目 `public` 目录，PHP 请求转发到 PHP-FPM（9000 端口）。
-重载 Nginx 后访问 `http://你的域名/` 即可看到页面。
+`deploy/nginx.conf` 已将 `root` 指向项目根目录 `/www/lottery`，并把 `/api/` 映射到项目下的 `api/` 目录、根路径回退到 `public/index.html`，PHP 请求转发到 PHP-FPM（9000 端口）。
+将 `deploy/nginx.conf` 复制为 `/etc/nginx/sites-available/lottery` 并启用，重载 Nginx 后访问 `http://服务器IP/` 即可看到页面。
 
 ### 4. Docker 部署（可选）
 ```bash
