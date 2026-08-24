@@ -1,0 +1,8 @@
+{
+    "name": "lottery-stats",
+    "description": "福利彩票双色球 & 体育彩票大乐透 开奖结果抓取与统计展示（PHP + Workerman + Nginx + SQLite）",
+    "require": {
+        "php": ">=8.1",
+        "workerman/workerman": "^4.1"
+    }
+}

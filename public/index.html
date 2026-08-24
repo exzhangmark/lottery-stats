@@ -1,0 +1,120 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>彩票开奖统计</title>
+<style>
+  * { box-sizing: border-box; }
+  body { margin:0; font-family:"Microsoft YaHei",sans-serif; background:#f5f6fa; color:#333; }
+  header { background:#2c3e50; color:#fff; padding:14px 20px; display:flex; gap:12px; align-items:center; }
+  header h1 { font-size:18px; margin:0; }
+  .tabs { display:flex; gap:10px; margin-left:auto; }
+  .tab { padding:8px 18px; border-radius:6px; cursor:pointer; background:#34495e; color:#fff; border:none; font-size:14px; }
+  .tab.active { background:#e74c3c; }
+  .panel { display:none; padding:20px; }
+  .panel.active { display:block; }
+  .section-title { font-weight:bold; margin:18px 0 10px; font-size:15px; color:#2c3e50; }
+  .balls { display:flex; flex-wrap:wrap; gap:10px; }
+  .ball-wrap { text-align:center; width:52px; }
+  .ball {
+    width:46px; height:46px; border-radius:50%;
+    display:flex; align-items:center; justify-content:center;
+    font-weight:bold; font-size:16px; color:#fff; margin:0 auto;
+    box-shadow:0 2px 4px rgba(0,0,0,.2);
+  }
+  .ball.red  { background:radial-gradient(circle at 30% 30%, #ff6b6b, #c0392b); }
+  .ball.blue { background:radial-gradient(circle at 30% 30%, #5dade2, #2471a3); }
+  .count { font-size:12px; color:#666; margin-top:3px; }
+  table { width:100%; border-collapse:collapse; margin-top:14px; background:#fff; border-radius:8px; overflow:hidden; box-shadow:0 1px 3px rgba(0,0,0,.1); }
+  th,td { padding:9px 12px; text-align:center; border-bottom:1px solid #eee; font-size:13px; }
+  th { background:#ecf0f1; color:#2c3e50; }
+  .red-num { color:#c0392b; font-weight:bold; }
+  .blue-num { color:#2471a3; font-weight:bold; }
+  .loading { color:#888; padding:30px; text-align:center; }
+</style>
+</head>
+<body>
+<header>
+  <h1>彩票开奖统计</h1>
+  <div class="tabs">
+    <button class="tab active" data-type="ssq">福利双色球</button>
+    <button class="tab" data-type="dlt">体彩大乐透</button>
+  </div>
+</header>
+
+<section class="panel active" id="panel-ssq">
+  <div class="section-title">红球出现次数（1-33）</div>
+  <div class="balls" id="ssq-red"></div>
+  <div class="section-title">蓝球出现次数（1-16）</div>
+  <div class="balls" id="ssq-blue"></div>
+  <div class="section-title">开奖列表</div>
+  <table><thead><tr><th>期号</th><th>红球</th><th>蓝球</th><th>开奖时间</th></tr></thead>
+    <tbody id="ssq-list"><tr><td colspan="4" class="loading">加载中...</td></tr></tbody></table>
+</section>
+
+<section class="panel" id="panel-dlt">
+  <div class="section-title">红球出现次数（1-35）</div>
+  <div class="balls" id="dlt-red"></div>
+  <div class="section-title">蓝球出现次数（1-12）</div>
+  <div class="balls" id="dlt-blue"></div>
+  <div class="section-title">开奖列表</div>
+  <table><thead><tr><th>期号</th><th>红球</th><th>蓝球</th><th>开奖时间</th></tr></thead>
+    <tbody id="dlt-list"><tr><td colspan="4" class="loading">加载中...</td></tr></tbody></table>
+</section>
+
+<script>
+const apiBase = '/api/index.php';
+
+function renderBalls(containerId, counts, cls) {
+  const el = document.getElementById(containerId);
+  el.innerHTML = '';
+  counts.forEach((c, i) => {
+    const num = i + 1;
+    const wrap = document.createElement('div');
+    wrap.className = 'ball-wrap';
+    wrap.innerHTML = `<div class="ball ${cls}">${num}</div><div class="count">${c}次</div>`;
+    el.appendChild(wrap);
+  });
+}
+
+async function loadModule(type) {
+  // 统计
+  const stats = await fetch(`${apiBase}?action=stats&type=${type}`).then(r => r.json());
+  if (stats.code === 1) {
+    renderBalls(`${type}-red`, stats.redCount, 'red');
+    renderBalls(`${type}-blue`, stats.blueCount, 'blue');
+  }
+  // 列表
+  const list = await fetch(`${apiBase}?action=list&type=${type}`).then(r => r.json());
+  const tbody = document.getElementById(`${type}-list`);
+  if (list.code === 1 && list.data.length) {
+    tbody.innerHTML = list.data.map(r => {
+      const reds  = r.red.split(',').map(n => `<span class="red-num">${n}</span>`).join(' ');
+      const blues = r.blue.split(',').map(n => `<span class="blue-num">${n}</span>`).join(' ');
+      return `<tr><td>${r.issue}</td><td>${reds}</td><td>${blues}</td><td>${r.open_time || '-'}</td></tr>`;
+    }).join('');
+  } else {
+    tbody.innerHTML = '<tr><td colspan="4" class="loading">暂无数据</td></tr>';
+  }
+}
+
+// Tab 切换 + 懒加载
+let loaded = {};
+document.querySelectorAll('.tab').forEach(btn => {
+  btn.addEventListener('click', () => {
+    const type = btn.dataset.type;
+    document.querySelectorAll('.tab').forEach(b => b.classList.remove('active'));
+    document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
+    btn.classList.add('active');
+    document.getElementById('panel-' + type).classList.add('active');
+    if (!loaded[type]) { loadModule(type); loaded[type] = true; }
+  });
+});
+
+// 默认加载双色球
+loadModule('ssq');
+loaded['ssq'] = true;
+</script>
+</body>
+</html>
