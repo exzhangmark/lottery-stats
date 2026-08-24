@@ -18,11 +18,14 @@ $CONFIG = [
     'apis' => [
         'official_cwl' => [
             'name'     => 'cwl.gov.cn (福彩官方)',
-            'ssq'      => 'https://www.cwl.gov.cn/cwl_admin/front/cwlkj/search/kjxx/findDrawNotice?name=ssq&currentPage=%d&pageSize=20',
+            // 该接口忽略分页参数，单次请求即返回全部历史（实测 2055 期）。
+            // 因此不能当作分页源（否则 backfill 翻页终止条件永不触发，会一直翻到 MAX_PAGES）。
+            // 设为非分页源：一次取回全量，由 backfill/worker 按日期窗口过滤 + (type,issue) 去重。
+            'ssq'      => 'https://www.cwl.gov.cn/cwl_admin/front/cwlkj/search/kjxx/findDrawNotice?name=ssq',
             'dlt'      => null,   // 福彩官网不含体彩大乐透，自动跳过，回退备用源
             'parse'    => 'parseCwl',
             'headers'  => ['Referer: http://www.cwl.gov.cn/'],
-            'paginate' => true,
+            'paginate' => false,
         ],
         'official_tiyu' => [
             'name'     => 'lottery.gov.cn (体彩官方)',
@@ -137,7 +140,8 @@ function parseCwl($json, $type)
             'issue'     => $issue,
             'red'       => implode(',', $red),
             'blue'      => implode(',', $blue),
-            'open_time' => $item['openTime'] ?? $item['open_time'] ?? $item['date'] ?? null,
+            // cwl 的 date 形如 "2026-08-23(日)"，需剥掉括号内星期，否则 strtotime 解析失败
+            'open_time' => $item['openTime'] ?? $item['open_time'] ?? (isset($item['date']) ? preg_replace('/\(.*?\)/u', '', trim($item['date'])) : null),
         ];
     }
     return $rows;
