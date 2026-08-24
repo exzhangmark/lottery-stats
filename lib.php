@@ -9,19 +9,28 @@
 
 // ---------- 配置 ----------
 // 数据源按数组顺序作为优先级：任一成功即采用，全部失败才 1 小时后重试。
-// 主源：福彩官网 cwl.gov.cn（仅覆盖福利彩票，如双色球；不含体彩大乐透）
+// 双色球(ssq)主源：福彩官网 cwl.gov.cn（仅福彩，不含体彩）
+// 大乐透(dlt)主源：体彩官网 lottery.gov.cn（数据接口 webapi.sporttery.cn，gameNo=85）—— 官方源，优先级最高
 // 备用：huiniao、caipiaodate（两者均覆盖双色球与大乐透，负责兜底）
 //
 // URL 中的 %d 为页码占位符；paginate=false 的源不分页（仅取最新一页）。
 $CONFIG = [
     'apis' => [
-        'official' => [
-            'name'     => 'cwl.gov.cn',
+        'official_cwl' => [
+            'name'     => 'cwl.gov.cn (福彩官方)',
             'ssq'      => 'https://www.cwl.gov.cn/cwl_admin/front/cwlkj/search/kjxx/findDrawNotice?name=ssq&currentPage=%d&pageSize=20',
             'dlt'      => null,   // 福彩官网不含体彩大乐透，自动跳过，回退备用源
             'parse'    => 'parseCwl',
             'headers'  => ['Referer: http://www.cwl.gov.cn/'],
             'paginate' => true,
+        ],
+        'official_tiyu' => [
+            'name'     => 'lottery.gov.cn (体彩官方)',
+            'ssq'      => null,   // 体彩官网不含福利彩票双色球，自动跳过
+            'dlt'      => 'https://webapi.sporttery.cn/gateway/lottery/getHistoryPageListV1.qry?gameNo=85&provinceId=0&pageSize=30&isVerify=1&pageNo=%d&termLimits=0',
+            'parse'    => 'parseTiyu',
+            'headers'  => ['Referer: https://www.lottery.gov.cn/kj/kjlb.html?dlt'],
+            'paginate' => true,   // %d 映射到 pageNo，配合 backfill 翻页回填历史
         ],
         'backup1' => [
             'name'     => 'huiniao',
@@ -129,6 +138,35 @@ function parseCwl($json, $type)
             'red'       => implode(',', $red),
             'blue'      => implode(',', $blue),
             'open_time' => $item['openTime'] ?? $item['open_time'] ?? $item['date'] ?? null,
+        ];
+    }
+    return $rows;
+}
+
+// 解析 体彩官网 lottery.gov.cn 返回（数据接口 webapi.sporttery.cn）
+// 典型结构：{"errorCode":"0","success":true,"value":{"list":[{"lotteryDrawNum":"26096","lotteryDrawResult":"08 09 10 11 25 04 12","lotteryDrawTime":"2026-08-24",...}],"pages":98,"total":2914}}
+// lotteryDrawResult 为空格分隔：前 5 个为前区(红)，后 2 个为后区(蓝)
+function parseTiyu($json, $type)
+{
+    if (($json['errorCode'] ?? null) !== '0' && ($json['success'] ?? false) !== true) return false;
+    $value = $json['value'] ?? null;
+    if (!is_array($value)) return false;
+    $list = $value['list'] ?? [];
+    if (empty($list)) return false;
+    $rows = [];
+    foreach ($list as $item) {
+        $issue  = $item['lotteryDrawNum'] ?? null;
+        $result = $item['lotteryDrawResult'] ?? '';
+        if (!$issue || !$result) continue;
+        $nums = array_values(array_filter(explode(' ', preg_replace('/\s+/', ' ', trim($result))), 'strlen'));
+        if (count($nums) < 7) continue;          // 大乐透需 5 前区 + 2 后区
+        $red   = array_map('intval', array_slice($nums, 0, 5));
+        $blue  = array_map('intval', array_slice($nums, 5, 2));
+        $rows[] = [
+            'issue'     => $issue,
+            'red'       => implode(',', $red),
+            'blue'      => implode(',', $blue),
+            'open_time' => $item['lotteryDrawTime'] ?? null,
         ];
     }
     return $rows;
