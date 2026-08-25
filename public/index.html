@@ -183,9 +183,12 @@
   <select id="scheme-select" class="scheme-select">
     <option value="cold">冷门预选（选该范围内最冷号码）</option>
     <option value="hot">热门预选（选该范围内最热号码）</option>
+    <option value="mixed">冷热结合（一半热门 + 一半冷门）</option>
+    <option value="omit">遗漏值优先（选最久未开出的号码）</option>
+    <option value="balance">随机均衡（区间均分随机，分布均匀）</option>
   </select>
   <button class="gen-btn" id="genBtn">生成</button>
-  <span class="gen-tip">按当前「彩种 + 时间范围」的号码出现次数生成，同次数随机打散</span>
+  <span class="gen-tip">按当前「彩种 + 时间范围」的数据生成，同值随机打散，可反复生成</span>
 </div>
 
 <!-- 生成结果（点击生成后显示） -->
@@ -385,12 +388,15 @@ document.querySelectorAll('.range-btn').forEach(btn => {
 // 默认：双色球 + 本年
 activate('ssq', 'year');
 
-// ---------- 号码生成（冷门预选 / 热门预选） ----------
+// ---------- 号码生成（冷门预选 / 热门预选 / 冷热结合 / 遗漏值优先 / 随机均衡） ----------
 const RANGE_LABELS = { month:'本月', year:'本年', lastyear:'去年', '3y':'三年内', '5y':'五年内', '10y':'十年内', all:'全部' };
 const TYPE_LABELS  = { ssq:'福利双色球', dlt:'体彩大乐透' };
 const SCHEMES = {
-  cold: { name:'冷门预选', desc:'取该时间范围内出现次数最少的号码' },
-  hot:  { name:'热门预选', desc:'取该时间范围内出现次数最多的号码' },
+  cold:    { name:'冷门预选',   desc:'取该时间范围内出现次数最少的号码' },
+  hot:     { name:'热门预选',   desc:'取该时间范围内出现次数最多的号码' },
+  mixed:   { name:'冷热结合',   desc:'一半取最热号码、一半取最冷号码，兼顾热势与回补' },
+  omit:    { name:'遗漏值优先', desc:'取当前遗漏期数最长（最久未开出）的号码，博弈回补' },
+  balance: { name:'随机均衡',   desc:'号码范围均分为若干区间，每区间随机取 1 个，分布均匀且随机' },
 };
 
 // 清空生成结果（切换彩种/时间范围时调用）
@@ -416,17 +422,59 @@ function pickNumbers(entries, n, cold) {
   return arr.slice(0, n).sort((a, b) => a.num - b.num);
 }
 
-// 渲染生成结果中的球（号码上方带出现次数徽标，徽标按热度着色，与页面风格一致）
-function renderGenBalls(containerId, picks, cls, maxC) {
+// 冷热结合：一半取次数最高、一半取次数最低（同值随机打散）；
+// 奇数个时多出的 1 个随机取自热门或冷门一侧；出现重复时自动从中段补齐
+function pickMixed(entries, n) {
+  const half = Math.floor(n / 2);
+  let hotTake = half, coldTake = half;
+  if (n % 2 === 1) { if (Math.random() < 0.5) hotTake++; else coldTake++; }
+  const sorted = entries.map(([num, c]) => ({ num, c, r: Math.random() }));
+  sorted.sort((a, b) => b.c - a.c || a.r - b.r);           // 次数高在前
+  const picks = sorted.slice(0, hotTake);
+  if (coldTake > 0) picks.push(...sorted.slice(-coldTake)); // 数组尾部 = 次数最低
+  // 去重 + 不足补齐（正常号码池不会触发，防御性处理）
+  const seen = new Set();
+  const uniq = [];
+  for (const p of picks) { if (!seen.has(p.num)) { seen.add(p.num); uniq.push(p); } }
+  for (const p of sorted) {
+    if (uniq.length >= n) break;
+    if (!seen.has(p.num)) { seen.add(p.num); uniq.push(p); }
+  }
+  return uniq.slice(0, n).sort((a, b) => a.num - b.num);
+}
+
+// 遗漏值优先：取遗漏期数最大的号码（同遗漏随机打散），c 字段存放遗漏期数
+function pickOmit(omitEntries, n) {
+  const arr = omitEntries.map(([num, o]) => ({ num, c: Number(o) || 0, r: Math.random() }));
+  arr.sort((a, b) => b.c - a.c || a.r - b.r);
+  return arr.slice(0, n).sort((a, b) => a.num - b.num);
+}
+
+// 随机均衡：把 1~maxNum 均分为 n 段，每段随机取 1 个，号码分布均匀且完全随机
+function pickBalanced(maxNum, n) {
+  const picks = [];
+  const segSize = Math.ceil(maxNum / n);
+  for (let s = 0; s < n; s++) {
+    const lo = s * segSize + 1;
+    const hi = Math.min(maxNum, (s + 1) * segSize);
+    if (lo > maxNum) break;
+    picks.push({ num: lo + Math.floor(Math.random() * (hi - lo + 1)) });
+  }
+  return picks.sort((a, b) => a.num - b.num);
+}
+
+// 渲染生成结果中的球（号码上方带徽标：出现次数或遗漏期数，徽标按数值热度着色）
+function renderGenBalls(containerId, picks, cls, maxV, isOmit) {
   const el = document.getElementById(containerId);
   el.innerHTML = '';
   picks.forEach(p => {
-    const heat = maxC > 0 ? p.c / maxC : 0;
-    const hue  = Math.round(120 - heat * 120);   // 绿(冷) -> 红(热)
+    const heat = maxV > 0 ? p.c / maxV : 0;
+    const hue  = Math.round(120 - heat * 120);   // 绿(低) -> 红(高)
+    const label = isOmit ? `遗漏${p.c}期` : `${p.c}次`;
     const wrap = document.createElement('div');
     wrap.className = 'ball-wrap';
     wrap.innerHTML =
-      `<div class="count" style="background:hsl(${hue},75%,48%)">${p.c}次</div>` +
+      `<div class="count" style="background:hsl(${hue},75%,48%)">${label}</div>` +
       `<div class="ball ${cls}">${p.num}</div>`;
     el.appendChild(wrap);
   });
@@ -448,17 +496,51 @@ async function generatePick() {
     }
     // 各彩种规则：双色球 6红(1-33)+1蓝(1-16)；大乐透 5红(1-35)+2蓝(1-12)
     const rule = type === 'ssq'
-      ? { redN: 6, blueN: 1, redLabel: '红球（1-33 选 6 个，不重复）', blueLabel: '蓝球（1-16 选 1 个）' }
-      : { redN: 5, blueN: 2, redLabel: '红球（1-35 选 5 个，不重复）', blueLabel: '蓝球（1-12 选 2 个，不重复）' };
+      ? { redN: 6, blueN: 1, redMax: 33, blueMax: 16, redLabel: '红球（1-33 选 6 个，不重复）', blueLabel: '蓝球（1-16 选 1 个）' }
+      : { redN: 5, blueN: 2, redMax: 35, blueMax: 12, redLabel: '红球（1-35 选 5 个，不重复）', blueLabel: '蓝球（1-12 选 2 个，不重复）' };
 
     const redEntries  = countEntries(stats.redCount);
     const blueEntries = countEntries(stats.blueCount);
-    const reds  = pickNumbers(redEntries,  rule.redN,  schemeId === 'cold');
-    const blues = pickNumbers(blueEntries, rule.blueN, schemeId === 'cold');
-    const redMax  = redEntries.reduce((m, [, c]) => Math.max(m, c), 0);
-    const blueMax = blueEntries.reduce((m, [, c]) => Math.max(m, c), 0);
-    // 该范围内是否有开奖数据（红球次数全为 0 => 无数据）
-    const hasData = redEntries.some(([, c]) => c > 0);
+    const redMap  = new Map(redEntries);
+    const blueMap = new Map(blueEntries);
+    const hasData = redEntries.some(([, c]) => c > 0);   // 红球次数全为 0 => 范围内无开奖数据
+
+    let reds, blues, isOmit = false, omitFallback = false;
+    if (schemeId === 'balance') {
+      // 随机均衡：区间均分 + 每段随机；附上出现次数用于徽标展示
+      reds  = pickBalanced(rule.redMax,  rule.redN);
+      blues = pickBalanced(rule.blueMax, rule.blueN);
+      reds.forEach(p => { p.c = redMap.get(p.num) || 0; });
+      blues.forEach(p => { p.c = blueMap.get(p.num) || 0; });
+    } else if (schemeId === 'omit') {
+      if (stats.redOmit && stats.blueOmit) {
+        // 遗漏值优先：取遗漏期数最长的号码
+        reds  = pickOmit(countEntries(stats.redOmit), rule.redN);
+        blues = pickOmit(countEntries(stats.blueOmit), rule.blueN);
+        isOmit = true;
+      } else {
+        // 后端旧版本未返回遗漏值：退化为随机均衡并提示
+        reds  = pickBalanced(rule.redMax, rule.redN);
+        blues = pickBalanced(rule.blueMax, rule.blueN);
+        reds.forEach(p => { p.c = redMap.get(p.num) || 0; });
+        blues.forEach(p => { p.c = blueMap.get(p.num) || 0; });
+        omitFallback = true;
+      }
+    } else if (schemeId === 'mixed') {
+      // 冷热结合
+      reds  = pickMixed(redEntries, rule.redN);
+      blues = pickMixed(blueEntries, rule.blueN);
+    } else {
+      // 冷门预选 / 热门预选
+      reds  = pickNumbers(redEntries, rule.redN, schemeId === 'cold');
+      blues = pickNumbers(blueEntries, rule.blueN, schemeId === 'cold');
+    }
+
+    // 徽标着色用的最大值：遗漏模式下用最大遗漏期数，其它用最大出现次数
+    const redMaxV  = isOmit ? countEntries(stats.redOmit).reduce((m, [, v]) => Math.max(m, v), 0)
+                            : redEntries.reduce((m, [, c]) => Math.max(m, c), 0);
+    const blueMaxV = isOmit ? countEntries(stats.blueOmit).reduce((m, [, v]) => Math.max(m, v), 0)
+                            : blueEntries.reduce((m, [, c]) => Math.max(m, c), 0);
 
     const box = document.getElementById('genResult');
     box.innerHTML =
@@ -468,10 +550,11 @@ async function generatePick() {
       `<div class="balls" id="gen-red"></div>` +
       `<div class="gen-row-label">${rule.blueLabel}</div>` +
       `<div class="balls" id="gen-blue"></div>` +
+      (omitFallback ? '<div class="gen-note">注意：后端暂未返回遗漏值数据（请确认服务器代码已更新到最新），本次按随机均衡生成</div>' : '') +
       (hasData ? '' : '<div class="gen-note">注意：该时间范围内暂无开奖数据，以上号码为随机生成</div>');
     box.classList.add('show');
-    renderGenBalls('gen-red', reds, 'red', redMax);
-    renderGenBalls('gen-blue', blues, 'blue', blueMax);
+    renderGenBalls('gen-red', reds, 'red', redMaxV, isOmit);
+    renderGenBalls('gen-blue', blues, 'blue', blueMaxV, isOmit);
   } finally {
     btn.disabled = false; btn.textContent = '生成';
   }

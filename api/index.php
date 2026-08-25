@@ -93,26 +93,44 @@ if ($action === 'stats') {
     $params = [$type];
     if ($start !== null) { $sql .= " AND date(open_time) >= date(?)"; $params[] = $start; }
     if ($end   !== null) { $sql .= " AND date(open_time) < date(?)";  $params[] = $end;   }
+    $sql .= " ORDER BY issue DESC";   // 最新一期在前，用于计算遗漏值
     $stmt = $pdo->prepare($sql);
     $stmt->execute($params);
     $redCount  = array_fill(1, $redMax, 0);
     $blueCount = array_fill(1, $blueMax, 0);
+    // 遗漏值：号码距最近一次开出隔了多少期（0 = 最新一期就开出；null = 该范围内从未开出）
+    $redOmit  = array_fill(1, $redMax, null);
+    $blueOmit = array_fill(1, $blueMax, null);
+    $idx = 0;   // 期序号，0 = 最新一期
     while ($r = $stmt->fetch(PDO::FETCH_ASSOC)) {
         foreach (explode(',', $r['red']) as $n) {
             $n = (int)$n;
-            if ($n >= 1 && $n <= $redMax) $redCount[$n]++;
+            if ($n >= 1 && $n <= $redMax) {
+                $redCount[$n]++;
+                if ($redOmit[$n] === null) $redOmit[$n] = $idx;   // 第一次遇到即最近一次开出
+            }
         }
         foreach (explode(',', $r['blue']) as $n) {
             $n = (int)$n;
-            if ($n >= 1 && $n <= $blueMax) $blueCount[$n]++;
+            if ($n >= 1 && $n <= $blueMax) {
+                $blueCount[$n]++;
+                if ($blueOmit[$n] === null) $blueOmit[$n] = $idx;
+            }
         }
+        $idx++;
     }
+    $totalDraws = $idx;
+    // 该范围内从未开出的号码，遗漏值 = 范围内总期数
+    for ($n = 1; $n <= $redMax;  $n++) if ($redOmit[$n]  === null) $redOmit[$n]  = $totalDraws;
+    for ($n = 1; $n <= $blueMax; $n++) if ($blueOmit[$n] === null) $blueOmit[$n] = $totalDraws;
     echo json_encode([
         'code'      => 1,
         'redMax'    => $redMax,
         'blueMax'   => $blueMax,
         'redCount'  => $redCount,
         'blueCount' => $blueCount,
+        'redOmit'   => $redOmit,
+        'blueOmit'  => $blueOmit,
     ]);
     exit;
 }
