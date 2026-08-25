@@ -61,6 +61,29 @@
   }
   .range-btn:hover { border-color:#e74c3c; color:#e74c3c; }
   .range-btn.active { background:#e74c3c; color:#fff; border-color:#e74c3c; font-weight:bold; }
+  /* 选号方案生成条 */
+  .gen-bar {
+    display:flex; align-items:center; flex-wrap:wrap; gap:8px;
+    padding:10px 20px; background:#fff; border-bottom:1px solid #eee;
+  }
+  .scheme-select { padding:6px 10px; border:1px solid #d0d7de; border-radius:6px; font-size:13px; background:#fff; color:#333; cursor:pointer; }
+  .gen-btn {
+    padding:6px 20px; border:none; border-radius:6px; cursor:pointer;
+    background:#27ae60; color:#fff; font-size:13px; font-weight:bold;
+  }
+  .gen-btn:hover { background:#1e8449; }
+  .gen-btn:disabled { opacity:.6; cursor:not-allowed; }
+  .gen-tip { font-size:12px; color:#999; }
+  /* 生成结果卡片 */
+  .gen-result {
+    display:none; margin:16px 20px 0; padding:14px 16px;
+    background:#fff; border-radius:8px; box-shadow:0 1px 3px rgba(0,0,0,.08);
+  }
+  .gen-result.show { display:block; }
+  .gen-meta { font-size:14px; font-weight:bold; color:#2c3e50; margin-bottom:8px; }
+  .gen-sub { font-size:12px; color:#999; font-weight:normal; }
+  .gen-row-label { font-size:13px; color:#666; margin:8px 0 6px; }
+  .gen-note { font-size:12px; color:#e67e22; margin-top:10px; }
   /* 开奖列表分页条 */
   .pager {
     display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:10px;
@@ -154,6 +177,20 @@
   <button class="range-btn" data-range="10y">十年内</button>
 </div>
 
+<!-- 选号方案条：方案下拉 + 生成按钮 -->
+<div class="gen-bar">
+  <span class="rb-label">选号方案：</span>
+  <select id="scheme-select" class="scheme-select">
+    <option value="cold">冷门预选（选该范围内最冷号码）</option>
+    <option value="hot">热门预选（选该范围内最热号码）</option>
+  </select>
+  <button class="gen-btn" id="genBtn">生成</button>
+  <span class="gen-tip">按当前「彩种 + 时间范围」的号码出现次数生成，同次数随机打散</span>
+</div>
+
+<!-- 生成结果（点击生成后显示） -->
+<div class="gen-result" id="genResult"></div>
+
 <div class="main">
   <div class="lottery-area">
     <section class="panel active" id="panel-ssq">
@@ -216,6 +253,7 @@ let currentRange   = 'year';
 let currentPage    = 1;
 let currentPageSize = 20;
 const statsLoaded = new Set();   // 已加载过的 (type:range) 统计组合，避免重复请求
+const statsCache  = {};          // (type:range) -> stats 响应数据，供选号生成复用
 
 function renderBalls(containerId, counts, cls) {
   const el = document.getElementById(containerId);
@@ -250,8 +288,27 @@ function renderBalls(containerId, counts, cls) {
 async function fetchStats(type, range) {
   const stats = await fetch(`${apiBase}?action=stats&type=${type}&range=${range}`).then(r => r.json());
   if (stats.code === 1) {
+    statsCache[type + ':' + range] = stats;   // 缓存响应，供选号生成复用
     renderBalls(`${type}-red`, stats.redCount, 'red');
     renderBalls(`${type}-blue`, stats.blueCount, 'blue');
+  }
+}
+
+// 确保某 (type:range) 的统计已加载（生成号码时可能尚未拉取过）
+async function ensureStats(type, range) {
+  const key = type + ':' + range;
+  if (statsCache[key]) return statsCache[key];
+  try {
+    const stats = await fetch(`${apiBase}?action=stats&type=${type}&range=${range}`).then(r => r.json());
+    if (stats.code === 1) {
+      statsCache[key] = stats;
+      statsLoaded.add(key);
+      renderBalls(`${type}-red`, stats.redCount, 'red');
+      renderBalls(`${type}-blue`, stats.blueCount, 'blue');
+    }
+    return stats;
+  } catch (e) {
+    return null;
   }
 }
 
@@ -306,6 +363,7 @@ function activate(type, range) {
   currentType = type;
   currentRange = range;
   currentPage = 1;
+  resetGenResult();   // 切换彩种/范围后，旧生成结果已不适用，清空隐藏
   document.querySelectorAll('.tab').forEach(b => b.classList.toggle('active', b.dataset.type === type));
   document.querySelectorAll('.panel').forEach(p => p.classList.toggle('active', p.id === 'panel-' + type));
   document.querySelectorAll('.range-btn').forEach(b => b.classList.toggle('active', b.dataset.range === range));
@@ -326,6 +384,99 @@ document.querySelectorAll('.range-btn').forEach(btn => {
 
 // 默认：双色球 + 本年
 activate('ssq', 'year');
+
+// ---------- 号码生成（冷门预选 / 热门预选） ----------
+const RANGE_LABELS = { month:'本月', year:'本年', lastyear:'去年', '3y':'三年内', '5y':'五年内', '10y':'十年内', all:'全部' };
+const TYPE_LABELS  = { ssq:'福利双色球', dlt:'体彩大乐透' };
+const SCHEMES = {
+  cold: { name:'冷门预选', desc:'取该时间范围内出现次数最少的号码' },
+  hot:  { name:'热门预选', desc:'取该时间范围内出现次数最多的号码' },
+};
+
+// 清空生成结果（切换彩种/时间范围时调用）
+function resetGenResult() {
+  const box = document.getElementById('genResult');
+  if (box) { box.classList.remove('show'); box.innerHTML = ''; }
+}
+
+// redCount/blueCount 兼容对象/数组两种结构 -> [[号码,次数],...]
+function countEntries(counts) {
+  if (counts && typeof counts === 'object' && !Array.isArray(counts)) {
+    return Object.entries(counts).map(([k, v]) => [Number(k), Number(v)]);
+  }
+  if (Array.isArray(counts)) return counts.map((c, i) => [i + 1, Number(c)]);
+  return [];
+}
+
+// 按方案从 entries 中取 n 个号码：hot=次数最多在前，cold=次数最少在前；
+// 次数相同时用随机数打散（每次点「生成」结果可能不同），最后按号码升序输出
+function pickNumbers(entries, n, cold) {
+  const arr = entries.map(([num, c]) => ({ num, c, r: Math.random() }));
+  arr.sort((a, b) => cold ? (a.c - b.c || a.r - b.r) : (b.c - a.c || a.r - b.r));
+  return arr.slice(0, n).sort((a, b) => a.num - b.num);
+}
+
+// 渲染生成结果中的球（号码上方带出现次数徽标，徽标按热度着色，与页面风格一致）
+function renderGenBalls(containerId, picks, cls, maxC) {
+  const el = document.getElementById(containerId);
+  el.innerHTML = '';
+  picks.forEach(p => {
+    const heat = maxC > 0 ? p.c / maxC : 0;
+    const hue  = Math.round(120 - heat * 120);   // 绿(冷) -> 红(热)
+    const wrap = document.createElement('div');
+    wrap.className = 'ball-wrap';
+    wrap.innerHTML =
+      `<div class="count" style="background:hsl(${hue},75%,48%)">${p.c}次</div>` +
+      `<div class="ball ${cls}">${p.num}</div>`;
+    el.appendChild(wrap);
+  });
+}
+
+// 生成号码：按当前 (彩种 + 时间范围 + 方案)
+async function generatePick() {
+  const schemeId = document.getElementById('scheme-select').value;
+  const scheme = SCHEMES[schemeId];
+  if (!scheme) return;
+  const type = currentType, range = currentRange;
+  const btn = document.getElementById('genBtn');
+  btn.disabled = true; btn.textContent = '生成中...';
+  try {
+    const stats = await ensureStats(type, range);
+    if (!stats || stats.code !== 1) {
+      alert('统计数据加载失败，请稍后重试');
+      return;
+    }
+    // 各彩种规则：双色球 6红(1-33)+1蓝(1-16)；大乐透 5红(1-35)+2蓝(1-12)
+    const rule = type === 'ssq'
+      ? { redN: 6, blueN: 1, redLabel: '红球（1-33 选 6 个，不重复）', blueLabel: '蓝球（1-16 选 1 个）' }
+      : { redN: 5, blueN: 2, redLabel: '红球（1-35 选 5 个，不重复）', blueLabel: '蓝球（1-12 选 2 个，不重复）' };
+
+    const redEntries  = countEntries(stats.redCount);
+    const blueEntries = countEntries(stats.blueCount);
+    const reds  = pickNumbers(redEntries,  rule.redN,  schemeId === 'cold');
+    const blues = pickNumbers(blueEntries, rule.blueN, schemeId === 'cold');
+    const redMax  = redEntries.reduce((m, [, c]) => Math.max(m, c), 0);
+    const blueMax = blueEntries.reduce((m, [, c]) => Math.max(m, c), 0);
+    // 该范围内是否有开奖数据（红球次数全为 0 => 无数据）
+    const hasData = redEntries.some(([, c]) => c > 0);
+
+    const box = document.getElementById('genResult');
+    box.innerHTML =
+      `<div class="gen-meta">${TYPE_LABELS[type]} · ${RANGE_LABELS[range] || range} · ${scheme.name}` +
+        `<span class="gen-sub">（${scheme.desc}）</span></div>` +
+      `<div class="gen-row-label">${rule.redLabel}</div>` +
+      `<div class="balls" id="gen-red"></div>` +
+      `<div class="gen-row-label">${rule.blueLabel}</div>` +
+      `<div class="balls" id="gen-blue"></div>` +
+      (hasData ? '' : '<div class="gen-note">注意：该时间范围内暂无开奖数据，以上号码为随机生成</div>');
+    box.classList.add('show');
+    renderGenBalls('gen-red', reds, 'red', redMax);
+    renderGenBalls('gen-blue', blues, 'blue', blueMax);
+  } finally {
+    btn.disabled = false; btn.textContent = '生成';
+  }
+}
+document.getElementById('genBtn').addEventListener('click', generatePick);
 
 // ---------- 意见反馈 ----------
 const fbModal   = document.getElementById('fbModal');
