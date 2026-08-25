@@ -29,7 +29,10 @@
   .panel.active { display:block; }
   .section-title { font-weight:bold; margin:18px 0 10px; font-size:15px; color:#2c3e50; }
   .balls { display:flex; flex-wrap:wrap; gap:10px; }
-  .ball-wrap { text-align:center; width:52px; }
+  .ball-wrap {
+    display:flex; flex-direction:column; align-items:center;
+    width:52px; gap:5px;
+  }
   .ball {
     width:46px; height:46px; border-radius:50%;
     display:flex; align-items:center; justify-content:center;
@@ -38,7 +41,26 @@
   }
   .ball.red  { background:radial-gradient(circle at 30% 30%, #ff6b6b, #c0392b); }
   .ball.blue { background:radial-gradient(circle at 30% 30%, #5dade2, #2471a3); }
-  .count { font-size:12px; color:#666; margin-top:3px; }
+  /* 出现次数：移到球上方，醒目徽标样式（背景色由 JS 按热度着色） */
+  .count {
+    width:100%; min-height:18px; padding:2px 0;
+    font-size:13px; font-weight:bold; line-height:1; color:#fff;
+    text-align:center; border-radius:9px;
+    background:#e74c3c; box-shadow:0 1px 3px rgba(0,0,0,.25);
+  }
+  /* 时间范围选择条 */
+  .range-bar {
+    display:flex; align-items:center; flex-wrap:wrap; gap:8px;
+    padding:10px 20px; background:#fff; border-bottom:1px solid #eee;
+  }
+  .range-bar .rb-label { font-size:13px; color:#666; margin-right:2px; }
+  .range-btn {
+    padding:6px 14px; border:1px solid #d0d7de; background:#fff;
+    border-radius:16px; cursor:pointer; font-size:13px; color:#333;
+    transition:all .15s;
+  }
+  .range-btn:hover { border-color:#e74c3c; color:#e74c3c; }
+  .range-btn.active { background:#e74c3c; color:#fff; border-color:#e74c3c; font-weight:bold; }
   table { width:100%; border-collapse:collapse; margin-top:14px; background:#fff; border-radius:8px; overflow:hidden; box-shadow:0 1px 3px rgba(0,0,0,.1); }
   th,td { padding:9px 12px; text-align:center; border-bottom:1px solid #eee; font-size:13px; }
   th { background:#ecf0f1; color:#2c3e50; }
@@ -107,6 +129,16 @@
   </div>
 </header>
 
+<div class="range-bar">
+  <span class="rb-label">时间范围：</span>
+  <button class="range-btn" data-range="month">本月</button>
+  <button class="range-btn active" data-range="year">本年</button>
+  <button class="range-btn" data-range="lastyear">去年</button>
+  <button class="range-btn" data-range="3y">三年内</button>
+  <button class="range-btn" data-range="5y">五年内</button>
+  <button class="range-btn" data-range="10y">十年内</button>
+</div>
+
 <div class="main">
   <div class="lottery-area">
     <section class="panel active" id="panel-ssq">
@@ -161,6 +193,11 @@
 <script>
 const apiBase = '/api/index.php';
 
+// 当前选中的彩种与时间范围
+let currentType  = 'ssq';
+let currentRange = 'year';
+const loadedKeys = new Set();   // 已加载过的 (type:range) 组合，避免重复请求
+
 function renderBalls(containerId, counts, cls) {
   const el = document.getElementById(containerId);
   el.innerHTML = '';
@@ -173,23 +210,32 @@ function renderBalls(containerId, counts, cls) {
   } else {
     entries = [];
   }
+  // 计算最大次数，用于热度着色（次数越高颜色越偏红，更醒目）
+  let maxC = 0;
+  entries.forEach(([, c]) => { const n = Number(c); if (n > maxC) maxC = n; });
   entries.forEach(([num, c]) => {
+    const n = Number(c);
+    const heat = maxC > 0 ? n / maxC : 0;          // 0~1
+    const hue  = Math.round(120 - heat * 120);     // 绿(120) -> 红(0)
     const wrap = document.createElement('div');
     wrap.className = 'ball-wrap';
-    wrap.innerHTML = `<div class="ball ${cls}">${num}</div><div class="count">${c}次</div>`;
+    // 次数显示在球「上方」，背景按热度着色
+    wrap.innerHTML =
+      `<div class="count" style="background:hsl(${hue},75%,48%)">${n}</div>` +
+      `<div class="ball ${cls}">${num}</div>`;
     el.appendChild(wrap);
   });
 }
 
-async function loadModule(type) {
-  // 统计
-  const stats = await fetch(`${apiBase}?action=stats&type=${type}`).then(r => r.json());
+async function loadModule(type, range) {
+  // 统计（按时间范围过滤）
+  const stats = await fetch(`${apiBase}?action=stats&type=${type}&range=${range}`).then(r => r.json());
   if (stats.code === 1) {
     renderBalls(`${type}-red`, stats.redCount, 'red');
     renderBalls(`${type}-blue`, stats.blueCount, 'blue');
   }
-  // 列表
-  const list = await fetch(`${apiBase}?action=list&type=${type}`).then(r => r.json());
+  // 列表（同范围过滤）
+  const list = await fetch(`${apiBase}?action=list&type=${type}&range=${range}`).then(r => r.json());
   const tbody = document.getElementById(`${type}-list`);
   if (list.code === 1 && list.data.length) {
     tbody.innerHTML = list.data.map(r => {
@@ -198,26 +244,38 @@ async function loadModule(type) {
       return `<tr><td>${r.issue}</td><td>${reds}</td><td>${blues}</td><td>${r.open_time || '-'}</td></tr>`;
     }).join('');
   } else {
-    tbody.innerHTML = '<tr><td colspan="4" class="loading">暂无数据</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="4" class="loading">该时间范围内暂无数据</td></tr>';
   }
 }
 
-// Tab 切换 + 懒加载
-let loaded = {};
+// 激活某个 (彩种 + 范围) 组合：切换高亮 + 加载数据
+function activate(type, range) {
+  currentType = type;
+  currentRange = range;
+  // 高亮 tab
+  document.querySelectorAll('.tab').forEach(b => b.classList.toggle('active', b.dataset.type === type));
+  document.querySelectorAll('.panel').forEach(p => p.classList.toggle('active', p.id === 'panel-' + type));
+  // 高亮范围按钮
+  document.querySelectorAll('.range-btn').forEach(b => b.classList.toggle('active', b.dataset.range === range));
+  // 仅在未加载过时请求
+  const key = type + ':' + range;
+  if (!loadedKeys.has(key)) {
+    loadModule(type, range);
+    loadedKeys.add(key);
+  }
+}
+
+// Tab 切换
 document.querySelectorAll('.tab').forEach(btn => {
-  btn.addEventListener('click', () => {
-    const type = btn.dataset.type;
-    document.querySelectorAll('.tab').forEach(b => b.classList.remove('active'));
-    document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
-    btn.classList.add('active');
-    document.getElementById('panel-' + type).classList.add('active');
-    if (!loaded[type]) { loadModule(type); loaded[type] = true; }
-  });
+  btn.addEventListener('click', () => activate(btn.dataset.type, currentRange));
+});
+// 时间范围切换
+document.querySelectorAll('.range-btn').forEach(btn => {
+  btn.addEventListener('click', () => activate(currentType, btn.dataset.range));
 });
 
-// 默认加载双色球
-loadModule('ssq');
-loaded['ssq'] = true;
+// 默认：双色球 + 本年
+activate('ssq', 'year');
 
 // ---------- 意见反馈 ----------
 const fbModal   = document.getElementById('fbModal');

@@ -7,6 +7,7 @@
  *   php worker/backfill.php --since=2025-01-01   # 自定义起始日期
  *   php worker/backfill.php --type=ssq           # 只回填双色球
  *   php worker/backfill.php --source=huiniao     # 强制只用指定数据源（调试用）
+ *   php worker/backfill.php --all                # 全量回填（自 1995 年起的全部历史）
  *
  * 行为：
  *   - 对每个彩种，优先选用「第一个能返回数据」的数据源，并沿该源分页向后翻（最新→最早）。
@@ -29,6 +30,7 @@ foreach ($argv as $a) {
     if (preg_match('/^--since=(.+)$/', $a, $m))   $since = trim($m[1]);
     elseif (preg_match('/^--type=(\w+)$/', $a, $m)) $typeFilter = $m[1];
     elseif (preg_match('/^--source=(.+)$/', $a, $m)) $forceSource = trim($m[1]);
+    elseif ($a === '--all') $since = '1995-01-01';   // 全量历史回填（双色球 2003 起 / 大乐透 2007 起，1995 已覆盖）
 }
 
 $sinceTs = strtotime($since);
