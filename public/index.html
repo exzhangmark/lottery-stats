@@ -164,8 +164,16 @@ const apiBase = '/api/index.php';
 function renderBalls(containerId, counts, cls) {
   const el = document.getElementById(containerId);
   el.innerHTML = '';
-  counts.forEach((c, i) => {
-    const num = i + 1;
+  // 后端 redCount/blueCount 可能是对象 {"1":次数,...} 或数组 [次数,...]，两种都兼容
+  let entries;
+  if (counts && typeof counts === 'object' && !Array.isArray(counts)) {
+    entries = Object.entries(counts).sort((a, b) => Number(a[0]) - Number(b[0]));
+  } else if (Array.isArray(counts)) {
+    entries = counts.map((c, i) => [String(i + 1), c]);
+  } else {
+    entries = [];
+  }
+  entries.forEach(([num, c]) => {
     const wrap = document.createElement('div');
     wrap.className = 'ball-wrap';
     wrap.innerHTML = `<div class="ball ${cls}">${num}</div><div class="count">${c}次</div>`;
