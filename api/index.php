@@ -13,7 +13,7 @@ header('Access-Control-Allow-Origin: *');
 $action = $_GET['action'] ?? '';
 $type   = $_GET['type']   ?? '';
 $range  = $_GET['range']  ?? 'all';
-$allowedRanges = ['all', 'month', 'year', 'lastyear', '3y', '5y', '10y'];
+$allowedRanges = ['all', 'month', 'year', 'lastyear', '3y', '5y', '10y', 'history'];
 if (!in_array($range, $allowedRanges)) {
     $range = 'all';
 }
@@ -36,6 +36,7 @@ function rangeWindow($r)
         case '3y':  return [(clone $now)->modify('-3 years')->format('Y-m-d'), null];
         case '5y':  return [(clone $now)->modify('-5 years')->format('Y-m-d'), null];
         case '10y': return [(clone $now)->modify('-10 years')->format('Y-m-d'), null];
+        case 'history': return [null, $now->format('Y') . '-01-01'];   // 今年之前的全部历史（不含今年），供"历史复刻"方案内部使用
         case 'all':
         default:    return [null, null];
     }

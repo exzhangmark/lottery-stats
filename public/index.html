@@ -187,7 +187,7 @@
     <option value="omit">遗漏值优先（选最久未开出的号码）</option>
     <option value="balance">随机均衡（区间均分随机，分布均匀）</option>
     <option value="avg">均值回归（选次数最接近平均值的号码）</option>
-    <option value="repeat">上期重号（照抄上一期开奖号）</option>
+    <option value="repeat">历史复刻（随机抄一期历史开奖号，不含今年）</option>
     <option value="lucky">吉利玄学（专挑带 6 和 8 的号码）</option>
     <option value="flat">躺平机选（纯随机，概率与烧脑分析相同）</option>
   </select>
@@ -402,7 +402,7 @@ const SCHEMES = {
   omit:    { name:'遗漏值优先', desc:'取当前遗漏期数最长（最久未开出）的号码，博弈回补' },
   balance: { name:'随机均衡',   desc:'号码范围均分为若干区间，每区间随机取 1 个，分布均匀且随机' },
   avg:     { name:'均值回归',   desc:'取出现次数最接近全体平均值的号码，统计学上的中庸之道' },
-  repeat:  { name:'上期重号',   desc:'直接照抄该范围内最后一期的开奖号码（彩民圈"重号"玩法）' },
+  repeat:  { name:'历史复刻',   desc:'随机抽取历史（不含今年）某一期，照抄那期的中奖号码' },
   lucky:   { name:'吉利玄学',   desc:'专挑带 6 和 8 的吉利号码，六六大顺、恭喜发财' },
   flat:    { name:'躺平机选',   desc:'零分析纯随机机选——反正中奖概率和烧脑分析一模一样' },
 };
@@ -552,7 +552,7 @@ async function generatePick() {
     const blueMap = new Map(blueEntries);
     const hasData = redEntries.some(([, c]) => c > 0);   // 红球次数全为 0 => 范围内无开奖数据
 
-    let reds, blues, isOmit = false, omitFallback = false;
+    let reds, blues, isOmit = false, omitFallback = false, extraNote = '';
     if (schemeId === 'balance') {
       // 随机均衡：区间均分 + 每段随机；附上出现次数用于徽标展示
       reds  = pickBalanced(rule.redMax,  rule.redN);
@@ -582,22 +582,34 @@ async function generatePick() {
       reds  = pickAverage(redEntries, rule.redN);
       blues = pickAverage(blueEntries, rule.blueN);
     } else if (schemeId === 'repeat') {
-      // 上期重号：照抄该范围内最后一期的开奖号；取不到（无数据/格式异常）则退化为纯随机
+      // 历史复刻：从历史（不含今年）中随机抽一期，照抄那期的中奖号码
       try {
-        const last = await fetch(`${apiBase}?action=list&type=${type}&range=${range}&page=1&pageSize=1`).then(r => r.json());
-        const row = last && last.code === 1 && last.data && last.data[0] ? last.data[0] : null;
-        const rNums = row ? row.red.split(',').map(Number).filter(v => v >= 1 && v <= rule.redMax)  : [];
-        const bNums = row ? row.blue.split(',').map(Number).filter(v => v >= 1 && v <= rule.blueMax) : [];
-        if (rNums.length === rule.redN && bNums.length === rule.blueN) {
-          reds  = rNums.map(num => ({ num, c: redMap.get(num)  || 0 })).sort((a, b) => a.num - b.num);
-          blues = bNums.map(num => ({ num, c: blueMap.get(num) || 0 })).sort((a, b) => a.num - b.num);
-        } else {
-          reds  = pickFlat(rule.redMax, rule.redN, redMap);
-          blues = pickFlat(rule.blueMax, rule.blueN, blueMap);
+        // 先取第 1 页（pageSize=100）拿到总期数
+        const first = await fetch(`${apiBase}?action=list&type=${type}&range=history&page=1&pageSize=100`).then(r => r.json());
+        if (first && first.code === 1 && first.total > 0) {
+          const idx  = Math.floor(Math.random() * first.total);             // 随机一期（0 基）
+          const page = Math.floor(idx / first.pageSize) + 1;
+          let row = null;
+          if (page === 1) {
+            row = first.data[idx] || null;
+          } else {
+            const pd = await fetch(`${apiBase}?action=list&type=${type}&range=history&page=${page}&pageSize=${first.pageSize}`).then(r => r.json());
+            row = (pd && pd.code === 1) ? (pd.data[idx % first.pageSize] || null) : null;
+          }
+          const rNums = row ? row.red.split(',').map(Number).filter(v => v >= 1 && v <= rule.redMax)  : [];
+          const bNums = row ? row.blue.split(',').map(Number).filter(v => v >= 1 && v <= rule.blueMax) : [];
+          if (rNums.length === rule.redN && bNums.length === rule.blueN) {
+            reds  = rNums.map(num => ({ num, c: redMap.get(num)  || 0 })).sort((a, b) => a.num - b.num);
+            blues = bNums.map(num => ({ num, c: blueMap.get(num) || 0 })).sort((a, b) => a.num - b.num);
+            extraNote = `复制自历史第 ${row.issue} 期（${(row.open_time || '').slice(0, 10)}）`;
+          }
         }
+        if (!reds) throw new Error('no history row');
       } catch (e) {
+        // 无历史数据（如未跑过 --all 回填）或数据异常：退化为纯随机并提示
         reds  = pickFlat(rule.redMax, rule.redN, redMap);
         blues = pickFlat(rule.blueMax, rule.blueN, blueMap);
+        extraNote = '历史数据（不含今年）为空：请先在服务器执行 php worker/backfill.php --all 回填历史数据，本次为随机生成';
       }
     } else if (schemeId === 'lucky') {
       // 吉利玄学
@@ -627,6 +639,7 @@ async function generatePick() {
       `<div class="balls" id="gen-red"></div>` +
       `<div class="gen-row-label">${rule.blueLabel}</div>` +
       `<div class="balls" id="gen-blue"></div>` +
+      (extraNote ? `<div class="gen-note">${extraNote}</div>` : '') +
       (omitFallback ? '<div class="gen-note">注意：后端暂未返回遗漏值数据（请确认服务器代码已更新到最新），本次按随机均衡生成</div>' : '') +
       (hasData ? '' : '<div class="gen-note">注意：该时间范围内暂无开奖数据，以上号码为随机生成</div>');
     box.classList.add('show');
