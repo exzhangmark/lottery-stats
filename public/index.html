@@ -186,6 +186,10 @@
     <option value="mixed">冷热结合（一半热门 + 一半冷门）</option>
     <option value="omit">遗漏值优先（选最久未开出的号码）</option>
     <option value="balance">随机均衡（区间均分随机，分布均匀）</option>
+    <option value="avg">均值回归（选次数最接近平均值的号码）</option>
+    <option value="repeat">上期重号（照抄上一期开奖号）</option>
+    <option value="lucky">吉利玄学（专挑带 6 和 8 的号码）</option>
+    <option value="flat">躺平机选（纯随机，概率与烧脑分析相同）</option>
   </select>
   <button class="gen-btn" id="genBtn">生成</button>
   <span class="gen-tip">按当前「彩种 + 时间范围」的数据生成，同值随机打散，可反复生成</span>
@@ -397,6 +401,10 @@ const SCHEMES = {
   mixed:   { name:'冷热结合',   desc:'一半取最热号码、一半取最冷号码，兼顾热势与回补' },
   omit:    { name:'遗漏值优先', desc:'取当前遗漏期数最长（最久未开出）的号码，博弈回补' },
   balance: { name:'随机均衡',   desc:'号码范围均分为若干区间，每区间随机取 1 个，分布均匀且随机' },
+  avg:     { name:'均值回归',   desc:'取出现次数最接近全体平均值的号码，统计学上的中庸之道' },
+  repeat:  { name:'上期重号',   desc:'直接照抄该范围内最后一期的开奖号码（彩民圈"重号"玩法）' },
+  lucky:   { name:'吉利玄学',   desc:'专挑带 6 和 8 的吉利号码，六六大顺、恭喜发财' },
+  flat:    { name:'躺平机选',   desc:'零分析纯随机机选——反正中奖概率和烧脑分析一模一样' },
 };
 
 // 清空生成结果（切换彩种/时间范围时调用）
@@ -461,6 +469,45 @@ function pickBalanced(maxNum, n) {
     picks.push({ num: lo + Math.floor(Math.random() * (hi - lo + 1)) });
   }
   return picks.sort((a, b) => a.num - b.num);
+}
+
+// 均值回归：取出现次数与全体平均值之差的绝对值最小的号码（最"中庸"），同差随机打散
+function pickAverage(entries, n) {
+  const counts = entries.map(([, c]) => c);
+  const avg = counts.length ? counts.reduce((s, v) => s + v, 0) / counts.length : 0;
+  const arr = entries.map(([num, c]) => ({ num, c, d: Math.abs(c - avg), r: Math.random() }));
+  arr.sort((a, b) => a.d - b.d || a.r - b.r);
+  return arr.slice(0, n).sort((a, b) => a.num - b.num);
+}
+
+// 吉利玄学：按"吉利等级"选号——T1 号码本身含数字 6 或 8；T2 数字之和为 6 或 8；T3 其它。同层随机
+function luckyTier(num) {
+  const s = String(num);
+  if (s.includes('6') || s.includes('8')) return 0;
+  const digitSum = [...s].reduce((t, ch) => t + Number(ch), 0);
+  if (digitSum === 6 || digitSum === 8) return 1;
+  return 2;
+}
+function pickLucky(maxNum, n, countMap) {
+  const arr = [];
+  for (let num = 1; num <= maxNum; num++) arr.push({ num, t: luckyTier(num), r: Math.random() });
+  arr.sort((a, b) => a.t - b.t || a.r - b.r);
+  return arr.slice(0, n)
+    .map(p => ({ num: p.num, c: countMap.get(p.num) || 0 }))
+    .sort((a, b) => a.num - b.num);
+}
+
+// 躺平机选：全域均匀纯随机（洗牌后取前 n），零分析
+function pickFlat(maxNum, n, countMap) {
+  const pool = [];
+  for (let num = 1; num <= maxNum; num++) pool.push(num);
+  for (let i = pool.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [pool[i], pool[j]] = [pool[j], pool[i]];
+  }
+  return pool.slice(0, n)
+    .sort((a, b) => a - b)
+    .map(num => ({ num, c: countMap.get(num) || 0 }));
 }
 
 // 渲染生成结果中的球（号码上方带徽标：出现次数或遗漏期数，徽标按数值热度着色）
@@ -530,6 +577,36 @@ async function generatePick() {
       // 冷热结合
       reds  = pickMixed(redEntries, rule.redN);
       blues = pickMixed(blueEntries, rule.blueN);
+    } else if (schemeId === 'avg') {
+      // 均值回归
+      reds  = pickAverage(redEntries, rule.redN);
+      blues = pickAverage(blueEntries, rule.blueN);
+    } else if (schemeId === 'repeat') {
+      // 上期重号：照抄该范围内最后一期的开奖号；取不到（无数据/格式异常）则退化为纯随机
+      try {
+        const last = await fetch(`${apiBase}?action=list&type=${type}&range=${range}&page=1&pageSize=1`).then(r => r.json());
+        const row = last && last.code === 1 && last.data && last.data[0] ? last.data[0] : null;
+        const rNums = row ? row.red.split(',').map(Number).filter(v => v >= 1 && v <= rule.redMax)  : [];
+        const bNums = row ? row.blue.split(',').map(Number).filter(v => v >= 1 && v <= rule.blueMax) : [];
+        if (rNums.length === rule.redN && bNums.length === rule.blueN) {
+          reds  = rNums.map(num => ({ num, c: redMap.get(num)  || 0 })).sort((a, b) => a.num - b.num);
+          blues = bNums.map(num => ({ num, c: blueMap.get(num) || 0 })).sort((a, b) => a.num - b.num);
+        } else {
+          reds  = pickFlat(rule.redMax, rule.redN, redMap);
+          blues = pickFlat(rule.blueMax, rule.blueN, blueMap);
+        }
+      } catch (e) {
+        reds  = pickFlat(rule.redMax, rule.redN, redMap);
+        blues = pickFlat(rule.blueMax, rule.blueN, blueMap);
+      }
+    } else if (schemeId === 'lucky') {
+      // 吉利玄学
+      reds  = pickLucky(rule.redMax, rule.redN, redMap);
+      blues = pickLucky(rule.blueMax, rule.blueN, blueMap);
+    } else if (schemeId === 'flat') {
+      // 躺平机选
+      reds  = pickFlat(rule.redMax, rule.redN, redMap);
+      blues = pickFlat(rule.blueMax, rule.blueN, blueMap);
     } else {
       // 冷门预选 / 热门预选
       reds  = pickNumbers(redEntries, rule.redN, schemeId === 'cold');
