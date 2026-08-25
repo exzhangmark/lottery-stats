@@ -61,6 +61,21 @@
   }
   .range-btn:hover { border-color:#e74c3c; color:#e74c3c; }
   .range-btn.active { background:#e74c3c; color:#fff; border-color:#e74c3c; font-weight:bold; }
+  /* 开奖列表分页条 */
+  .pager {
+    display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:10px;
+    margin-top:12px; padding:10px 12px; background:#fff; border-radius:8px;
+    box-shadow:0 1px 3px rgba(0,0,0,.08); font-size:13px; color:#555;
+  }
+  .pager select.ps-select { padding:4px 6px; border:1px solid #d0d7de; border-radius:6px; font-size:13px; background:#fff; }
+  .pager-right { display:flex; align-items:center; gap:10px; }
+  .pg-btn {
+    padding:5px 12px; border:1px solid #d0d7de; background:#fff; border-radius:6px;
+    cursor:pointer; font-size:13px; color:#333;
+  }
+  .pg-btn:hover:not(:disabled) { border-color:#e74c3c; color:#e74c3c; }
+  .pg-btn:disabled { opacity:.45; cursor:not-allowed; }
+  .pg-info { color:#666; }
   table { width:100%; border-collapse:collapse; margin-top:14px; background:#fff; border-radius:8px; overflow:hidden; box-shadow:0 1px 3px rgba(0,0,0,.1); }
   th,td { padding:9px 12px; text-align:center; border-bottom:1px solid #eee; font-size:13px; }
   th { background:#ecf0f1; color:#2c3e50; }
@@ -149,6 +164,7 @@
       <div class="section-title">开奖列表</div>
       <table><thead><tr><th>期号</th><th>红球</th><th>蓝球</th><th>开奖时间</th></tr></thead>
         <tbody id="ssq-list"><tr><td colspan="4" class="loading">加载中...</td></tr></tbody></table>
+      <div class="pager" id="ssq-pager"></div>
     </section>
 
     <section class="panel" id="panel-dlt">
@@ -159,6 +175,7 @@
       <div class="section-title">开奖列表</div>
       <table><thead><tr><th>期号</th><th>红球</th><th>蓝球</th><th>开奖时间</th></tr></thead>
         <tbody id="dlt-list"><tr><td colspan="4" class="loading">加载中...</td></tr></tbody></table>
+      <div class="pager" id="dlt-pager"></div>
     </section>
   </div>
 </div>
@@ -193,10 +210,12 @@
 <script>
 const apiBase = '/api/index.php';
 
-// 当前选中的彩种与时间范围
-let currentType  = 'ssq';
-let currentRange = 'year';
-const loadedKeys = new Set();   // 已加载过的 (type:range) 组合，避免重复请求
+// 当前选中的彩种 / 时间范围 / 分页状态
+let currentType    = 'ssq';
+let currentRange   = 'year';
+let currentPage    = 1;
+let currentPageSize = 20;
+const statsLoaded = new Set();   // 已加载过的 (type:range) 统计组合，避免重复请求
 
 function renderBalls(containerId, counts, cls) {
   const el = document.getElementById(containerId);
@@ -227,42 +246,73 @@ function renderBalls(containerId, counts, cls) {
   });
 }
 
-async function loadModule(type, range) {
-  // 统计（按时间范围过滤）
+// 统计（按时间范围过滤）—— 以 (type:range) 缓存，切换分页时不重复请求
+async function fetchStats(type, range) {
   const stats = await fetch(`${apiBase}?action=stats&type=${type}&range=${range}`).then(r => r.json());
   if (stats.code === 1) {
     renderBalls(`${type}-red`, stats.redCount, 'red');
     renderBalls(`${type}-blue`, stats.blueCount, 'blue');
   }
-  // 列表（同范围过滤）
-  const list = await fetch(`${apiBase}?action=list&type=${type}&range=${range}`).then(r => r.json());
+}
+
+// 开奖列表（按时间范围 + 分页过滤）
+async function loadList(type, range, page, pageSize) {
+  const list = await fetch(`${apiBase}?action=list&type=${type}&range=${range}&page=${page}&pageSize=${pageSize}`).then(r => r.json());
   const tbody = document.getElementById(`${type}-list`);
+  const pager = document.getElementById(`${type}-pager`);
   if (list.code === 1 && list.data.length) {
     tbody.innerHTML = list.data.map(r => {
       const reds  = r.red.split(',').map(n => `<span class="red-num">${n}</span>`).join(' ');
       const blues = r.blue.split(',').map(n => `<span class="blue-num">${n}</span>`).join(' ');
       return `<tr><td>${r.issue}</td><td>${reds}</td><td>${blues}</td><td>${r.open_time || '-'}</td></tr>`;
     }).join('');
+    renderPager(type, range, list.page, list.pageSize, list.total);
   } else {
     tbody.innerHTML = '<tr><td colspan="4" class="loading">该时间范围内暂无数据</td></tr>';
+    pager.innerHTML = '';
   }
 }
 
-// 激活某个 (彩种 + 范围) 组合：切换高亮 + 加载数据
+// 渲染分页条：每页条数选择 + 上一页/下一页 + 页码信息
+function renderPager(type, range, page, pageSize, total) {
+  const el = document.getElementById(`${type}-pager`);
+  const totalPages = Math.max(1, Math.ceil(total / pageSize));
+  el.innerHTML =
+    `<div class="pager-left">每页` +
+      `<select class="ps-select">` +
+        [10, 20, 50, 100].map(n => `<option value="${n}"${n === pageSize ? ' selected' : ''}>${n}</option>`).join('') +
+      `</select> 条` +
+    `</div>` +
+    `<div class="pager-right">` +
+      `<button class="pg-btn" data-act="prev"${page <= 1 ? ' disabled' : ''}>上一页</button>` +
+      `<span class="pg-info">第 ${page} / ${totalPages} 页（共 ${total} 条）</span>` +
+      `<button class="pg-btn" data-act="next"${page >= totalPages ? ' disabled' : ''}>下一页</button>` +
+    `</div>`;
+  el.querySelector('.ps-select').addEventListener('change', e => {
+    currentPageSize = parseInt(e.target.value, 10);
+    currentPage = 1;
+    loadList(currentType, currentRange, currentPage, currentPageSize);
+  });
+  el.querySelector('[data-act="prev"]').addEventListener('click', () => {
+    if (currentPage > 1) { currentPage--; loadList(currentType, currentRange, currentPage, currentPageSize); }
+  });
+  el.querySelector('[data-act="next"]').addEventListener('click', () => {
+    if (currentPage < totalPages) { currentPage++; loadList(currentType, currentRange, currentPage, currentPageSize); }
+  });
+}
+
+// 激活某个 (彩种 + 范围) 组合：切换高亮 + 加载数据（切范围/彩种时回到第 1 页）
 function activate(type, range) {
   currentType = type;
   currentRange = range;
-  // 高亮 tab
+  currentPage = 1;
   document.querySelectorAll('.tab').forEach(b => b.classList.toggle('active', b.dataset.type === type));
   document.querySelectorAll('.panel').forEach(p => p.classList.toggle('active', p.id === 'panel-' + type));
-  // 高亮范围按钮
   document.querySelectorAll('.range-btn').forEach(b => b.classList.toggle('active', b.dataset.range === range));
-  // 仅在未加载过时请求
+  // 统计按 (type:range) 缓存；列表每次按分页重新拉取
   const key = type + ':' + range;
-  if (!loadedKeys.has(key)) {
-    loadModule(type, range);
-    loadedKeys.add(key);
-  }
+  if (!statsLoaded.has(key)) { fetchStats(type, range); statsLoaded.add(key); }
+  loadList(type, range, currentPage, currentPageSize);
 }
 
 // Tab 切换

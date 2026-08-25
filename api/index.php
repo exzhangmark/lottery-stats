@@ -45,15 +45,41 @@ $pdo = db();
 
 if ($action === 'list') {
     list($start, $end) = rangeWindow($range);
-    $sql = "SELECT issue, red, blue, open_time FROM results WHERE type=?";
-    $params = [$type];
-    if ($start !== null) { $sql .= " AND date(open_time) >= date(?)"; $params[] = $start; }
-    if ($end   !== null) { $sql .= " AND date(open_time) < date(?)";  $params[] = $end;   }
-    $sql .= " ORDER BY issue DESC LIMIT 500";
+
+    // 组合过滤条件 + 占位符（彩种 + 时间范围）
+    $cond  = "type = ?";
+    $binds = [$type];
+    if ($start !== null) { $cond .= " AND date(open_time) >= date(?)"; $binds[] = $start; }
+    if ($end   !== null) { $cond .= " AND date(open_time) < date(?)";  $binds[] = $end;   }
+
+    // 分页参数：每页 10/20/50/100，默认 20
+    $pageSize = (int)($_GET['pageSize'] ?? 20);
+    if (!in_array($pageSize, [10, 20, 50, 100], true)) $pageSize = 20;
+    $page   = max(1, (int)($_GET['page'] ?? 1));
+    $offset = ($page - 1) * $pageSize;
+
+    // 总数（用于前端分页）
+    $cStmt = $pdo->prepare("SELECT COUNT(*) FROM results WHERE {$cond}");
+    $cStmt->execute($binds);
+    $total = (int)$cStmt->fetchColumn();
+
+    // 本页数据（LIMIT/OFFSET 用 PARAM_INT 绑定，避免字符串被 SQLite 拒绝）
+    $sql = "SELECT issue, red, blue, open_time FROM results WHERE {$cond} ORDER BY issue DESC LIMIT ? OFFSET ?";
     $stmt = $pdo->prepare($sql);
-    $stmt->execute($params);
+    $p = 1;
+    foreach ($binds as $b) { $stmt->bindValue($p++, $b, PDO::PARAM_STR); }
+    $stmt->bindValue($p++, $pageSize, PDO::PARAM_INT);
+    $stmt->bindValue($p++, $offset,   PDO::PARAM_INT);
+    $stmt->execute();
     $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
-    echo json_encode(['code' => 1, 'data' => $rows]);
+
+    echo json_encode([
+        'code'     => 1,
+        'data'     => $rows,
+        'page'     => $page,
+        'pageSize' => $pageSize,
+        'total'    => $total,
+    ]);
     exit;
 }
 
