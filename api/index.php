@@ -101,29 +101,38 @@ if ($action === 'subscribe') {
         exit;
     }
     $ip = $_SERVER['REMOTE_ADDR'] ?? 'unknown';
-    // 频限：每 IP 每小时最多 10 次订阅（防刷）
-    $now = time(); $win = 3600; $max = 10;
-    $pdo->prepare("DELETE FROM sub_rate WHERE ts < ?")->execute([$now - $win]);
-    $stmt = $pdo->prepare("SELECT COUNT(*) FROM sub_rate WHERE ip=? AND ts>=?");
-    $stmt->execute([$ip, $now - $win]);
-    if ((int)$stmt->fetchColumn() >= $max) {
-        echo json_encode(['code' => 429, 'msg' => '操作过于频繁，请稍后再试']);
-        exit;
-    }
-    $pdo->prepare("INSERT INTO sub_rate (ip, ts) VALUES (?,?)")->execute([$ip, $now]);
-
     $key = trim($_POST['key'] ?? '');
     $scheme = trim($_POST['scheme'] ?? 'cold');
+    $drawPush = ($_POST['draw_push'] ?? '1') === '1' ? 1 : 0;
     $SCHEMES = ['cold', 'hot', 'mixed', 'omit', 'balance', 'avg', 'repeat', 'lucky', 'flat'];
     if (!preg_match('/^[A-Za-z0-9]{8,64}$/', $key)) {
         echo json_encode(['code' => 422, 'msg' => '息知 key 格式不正确（应为 8-64 位字母/数字）']);
         exit;
     }
     if (!in_array($scheme, $SCHEMES, true)) $scheme = 'cold';
-    // 幂等：同一 key 重复订阅则更新偏好方案并恢复状态
-    $pdo->prepare("INSERT INTO subscribers (xizhi_key, scheme, ip, status, created_at) VALUES (?,?,?,1,datetime('now','localtime')) ON CONFLICT(xizhi_key) DO UPDATE SET scheme=excluded.scheme, status=1, created_at=datetime('now','localtime')")
-        ->execute([$key, $scheme, $ip]);
-    echo json_encode(['code' => 1, 'msg' => '订阅成功，开奖结果与开奖日选号建议将推送到你的息知']);
+    try {
+        // 频限：每 IP 每小时最多 10 次订阅（防刷）
+        $now = time(); $win = 3600; $max = 10;
+        $pdo->prepare("DELETE FROM sub_rate WHERE ts < ?")->execute([$now - $win]);
+        $stmt = $pdo->prepare("SELECT COUNT(*) FROM sub_rate WHERE ip=? AND ts>=?");
+        $stmt->execute([$ip, $now - $win]);
+        if ((int)$stmt->fetchColumn() >= $max) {
+            echo json_encode(['code' => 429, 'msg' => '操作过于频繁，请稍后再试']);
+            exit;
+        }
+        $pdo->prepare("INSERT INTO sub_rate (ip, ts) VALUES (?,?)")->execute([$ip, $now]);
+        // 幂等：同一 key 重复订阅则更新偏好方案并恢复状态
+        $pdo->prepare("INSERT INTO subscribers (xizhi_key, scheme, draw_push, ip, status, created_at) VALUES (?,?,?,?,1,datetime('now','localtime')) ON CONFLICT(xizhi_key) DO UPDATE SET scheme=excluded.scheme, draw_push=excluded.draw_push, status=1, created_at=datetime('now','localtime')")
+            ->execute([$key, $scheme, $drawPush, $ip]);
+    } catch (\Throwable $e) {
+        // 明确返回 DB 错误，避免连接被 reset 导致浏览器只看到 ERR_CONNECTION_CLOSED
+        echo json_encode(['code' => 500, 'msg' => '订阅写入失败：' . $e->getMessage()]);
+        exit;
+    }
+    $msg = $drawPush
+        ? '订阅成功，开奖结果与开奖日选号建议将推送到你的息知'
+        : '订阅成功，开奖日选号建议将推送到你的息知（已关闭开奖结果推送）';
+    echo json_encode(['code' => 1, 'msg' => $msg]);
     exit;
 }
 
