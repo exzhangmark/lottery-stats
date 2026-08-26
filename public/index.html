@@ -162,6 +162,8 @@
   .sub-body label { display:block; font-size:13px; color:#555; margin:10px 0 4px; }
   .sub-body input { width:100%; border:1px solid #ddd; border-radius:6px; padding:8px; font-size:13px; box-sizing:border-box; }
   .sub-body .scheme-select { width:100%; }
+  .sub-switch { display:flex; align-items:center; justify-content:space-between; font-size:13px; color:#555; margin:12px 0 4px; cursor:pointer; }
+  .sub-switch input { width:auto; margin:0; }
   .sub-foot { font-size:12px; color:#999; margin-top:12px; text-align:center; }
   .sub-foot a { color:#e74c3c; cursor:pointer; }
 </style>
@@ -253,11 +255,12 @@
     <button class="fb-close" id="subClose">&times;</button>
   </div>
   <div class="sub-body">
-    <p class="sub-tip">填写你的 <b>息知</b> key，开奖结果与开奖日选号建议将推送到你的微信。<br>注册并获取 key：<a href="https://xizhi.qqoq.net" target="_blank" rel="noopener">xizhi.qqoq.net</a></p>
+    <p class="sub-tip">填写你的 <b>息知</b> key，开奖结果与开奖日选号建议将推送到你的微信。<br>注册并获取 key：<a href="https://xz.qqoq.net" target="_blank" rel="noopener">xz.qqoq.net</a></p>
     <label>息知 key</label>
     <input type="text" id="subKey" maxlength="64" placeholder="例如 XZd9447e94f7d7e1b05ee9025617264662" autocomplete="off">
     <label>开奖日推送方案（选号建议用）</label>
     <select id="subScheme" class="scheme-select"></select>
+    <label class="sub-switch"><span>接收开奖结果推送</span><input type="checkbox" id="subDrawPush" checked></label>
     <button class="fb-add" id="subBtn">订阅推送</button>
     <div class="err" id="subErr"></div>
     <div class="sub-foot">
@@ -798,6 +801,7 @@ subBtn.addEventListener('click', async () => {
     const fd = new FormData();
     fd.append('key', key);
     fd.append('scheme', subScheme.value);
+    fd.append('draw_push', document.getElementById('subDrawPush').checked ? '1' : '0');
     const d = await (await fetch(`${apiBase}?action=subscribe`, { method: 'POST', body: fd })).json();
     if (d.code === 1) {
       subErr.style.color = '#27ae60'; subErr.textContent = d.msg || '订阅成功';
