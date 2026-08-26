@@ -483,7 +483,8 @@ function xizhiSend($key, $title, $content)
 }
 
 // 所有收件人：站点 owner（配置中的 owner_key）+ 已订阅访客（subscribers 表）
-function allRecipients()
+// $forDraw=true 时仅返回「开启开奖结果推送」的订阅者（owner 始终包含）
+function allRecipients($forDraw = false)
 {
     $cfg = notifyConfig();
     $list = [];
@@ -492,7 +493,9 @@ function allRecipients()
     }
     try {
         $pdo = db();
-        $stmt = $pdo->query("SELECT xizhi_key, scheme FROM subscribers WHERE status=1");
+        $sql = "SELECT xizhi_key, scheme, COALESCE(draw_push,1) AS draw_push FROM subscribers WHERE status=1";
+        if ($forDraw) $sql .= " AND draw_push=1";
+        $stmt = $pdo->query($sql);
         while ($r = $stmt->fetch(PDO::FETCH_ASSOC)) {
             if (!empty($r['xizhi_key'])) {
                 $list[] = ['key' => $r['xizhi_key'], 'scheme' => $r['scheme'] ?? 'cold', 'who' => 'sub'];
@@ -512,7 +515,7 @@ function pushDrawResult($type, $row)
     $content = "红球：" . str_replace(',', ' ', $row['red'])
         . "\n蓝球：" . str_replace(',', ' ', $row['blue'])
         . "\n开奖时间：" . ($row['open_time'] ?? '');
-    foreach (allRecipients() as $rc) {
+    foreach (allRecipients(true) as $rc) {
         $res = xizhiSend($rc['key'], $title, $content);
         echo date('Y-m-d H:i:s') . " [notify] 开奖推送 {$type} 第{$row['issue']}期 → "
             . ($res['ok'] ? 'OK' : 'FAIL ' . $res['msg']) . "\n";
