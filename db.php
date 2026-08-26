@@ -38,11 +38,16 @@ function db()
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         xizhi_key TEXT NOT NULL,
         scheme TEXT NOT NULL DEFAULT 'cold',
+        draw_push INTEGER NOT NULL DEFAULT 1,
         ip TEXT,
         status INTEGER DEFAULT 1,
         created_at TEXT DEFAULT (datetime('now','localtime')),
         UNIQUE(xizhi_key)
     )");
+    // 兼容旧库：已存在 subscribers 表但缺少 draw_push 列时补上（列已存在则忽略报错）
+    try {
+        $pdo->exec("ALTER TABLE subscribers ADD COLUMN draw_push INTEGER NOT NULL DEFAULT 1");
+    } catch (\Throwable $e) { /* 列已存在，忽略 */ }
     // 通用键值表：用于记录「提醒推送防重复」的日期标记等
     $pdo->exec("CREATE TABLE IF NOT EXISTS meta (
         k TEXT PRIMARY KEY,
