@@ -9,31 +9,19 @@
 
 // ---------- 配置 ----------
 // 数据源按数组顺序作为优先级：任一成功即采用，全部失败才 1 小时后重试。
-// 双色球(ssq)主源：福彩官网 cwl.gov.cn（仅福彩，不含体彩）
-// 大乐透(dlt)主源：体彩官网 lottery.gov.cn（数据接口 webapi.sporttery.cn，gameNo=85）—— 官方源，优先级最高
+// 主源：福彩官网 cwl.gov.cn（仅覆盖福利彩票，如双色球；不含体彩大乐透）
 // 备用：huiniao、caipiaodate（两者均覆盖双色球与大乐透，负责兜底）
 //
 // URL 中的 %d 为页码占位符；paginate=false 的源不分页（仅取最新一页）。
 $CONFIG = [
     'apis' => [
-        'official_cwl' => [
-            'name'     => 'cwl.gov.cn (福彩官方)',
-            // 该接口忽略分页参数，单次请求即返回全部历史（实测 2055 期）。
-            // 因此不能当作分页源（否则 backfill 翻页终止条件永不触发，会一直翻到 MAX_PAGES）。
-            // 设为非分页源：一次取回全量，由 backfill/worker 按日期窗口过滤 + (type,issue) 去重。
-            'ssq'      => 'https://www.cwl.gov.cn/cwl_admin/front/cwlkj/search/kjxx/findDrawNotice?name=ssq',
+        'official' => [
+            'name'     => 'cwl.gov.cn',
+            'ssq'      => 'https://www.cwl.gov.cn/cwl_admin/front/cwlkj/search/kjxx/findDrawNotice?name=ssq&currentPage=%d&pageSize=20',
             'dlt'      => null,   // 福彩官网不含体彩大乐透，自动跳过，回退备用源
             'parse'    => 'parseCwl',
             'headers'  => ['Referer: http://www.cwl.gov.cn/'],
-            'paginate' => false,
-        ],
-        'official_tiyu' => [
-            'name'     => 'lottery.gov.cn (体彩官方)',
-            'ssq'      => null,   // 体彩官网不含福利彩票双色球，自动跳过
-            'dlt'      => 'https://webapi.sporttery.cn/gateway/lottery/getHistoryPageListV1.qry?gameNo=85&provinceId=0&pageSize=30&isVerify=1&pageNo=%d&termLimits=0',
-            'parse'    => 'parseTiyu',
-            'headers'  => ['Referer: https://www.lottery.gov.cn/kj/kjlb.html?dlt'],
-            'paginate' => true,   // %d 映射到 pageNo，配合 backfill 翻页回填历史
+            'paginate' => true,
         ],
         'backup1' => [
             'name'     => 'huiniao',
@@ -140,37 +128,7 @@ function parseCwl($json, $type)
             'issue'     => $issue,
             'red'       => implode(',', $red),
             'blue'      => implode(',', $blue),
-            // cwl 的 date 形如 "2026-08-23(日)"，需剥掉括号内星期，否则 strtotime 解析失败
-            'open_time' => $item['openTime'] ?? $item['open_time'] ?? (isset($item['date']) ? preg_replace('/\(.*?\)/u', '', trim($item['date'])) : null),
-        ];
-    }
-    return $rows;
-}
-
-// 解析 体彩官网 lottery.gov.cn 返回（数据接口 webapi.sporttery.cn）
-// 典型结构：{"errorCode":"0","success":true,"value":{"list":[{"lotteryDrawNum":"26096","lotteryDrawResult":"08 09 10 11 25 04 12","lotteryDrawTime":"2026-08-24",...}],"pages":98,"total":2914}}
-// lotteryDrawResult 为空格分隔：前 5 个为前区(红)，后 2 个为后区(蓝)
-function parseTiyu($json, $type)
-{
-    if (($json['errorCode'] ?? null) !== '0' && ($json['success'] ?? false) !== true) return false;
-    $value = $json['value'] ?? null;
-    if (!is_array($value)) return false;
-    $list = $value['list'] ?? [];
-    if (empty($list)) return false;
-    $rows = [];
-    foreach ($list as $item) {
-        $issue  = $item['lotteryDrawNum'] ?? null;
-        $result = $item['lotteryDrawResult'] ?? '';
-        if (!$issue || !$result) continue;
-        $nums = array_values(array_filter(explode(' ', preg_replace('/\s+/', ' ', trim($result))), 'strlen'));
-        if (count($nums) < 7) continue;          // 大乐透需 5 前区 + 2 后区
-        $red   = array_map('intval', array_slice($nums, 0, 5));
-        $blue  = array_map('intval', array_slice($nums, 5, 2));
-        $rows[] = [
-            'issue'     => $issue,
-            'red'       => implode(',', $red),
-            'blue'      => implode(',', $blue),
-            'open_time' => $item['lotteryDrawTime'] ?? null,
+            'open_time' => $item['openTime'] ?? $item['open_time'] ?? $item['date'] ?? null,
         ];
     }
     return $rows;
@@ -250,7 +208,69 @@ function fetchLatest($type)
         }
         $saved = saveRows($type, $rows);
         echo date('Y-m-d H:i:s') . " [{$type}] {$api['name']} 成功，抓取 " . count($rows) . " 期，新增 {$saved} 期\n";
+        // 抓到新增开奖数据 → 推送最新一期到微信（PushPlus）。rows[0] 为该页最新一期。
+        if ($saved > 0 && !empty($rows[0])) {
+            notifyPush($type, $rows[0]);
+        }
         return true;
     }
     return false;
+}
+
+// ---------- 开奖结果推送（PushPlus → 个人微信） ----------
+// 配置见 notify_config.php（由 notify_config.example.php 复制而来，含私密 token，已 gitignore）
+function notifyConfig()
+{
+    static $cfg = null;
+    if ($cfg !== null) return $cfg;
+    $file = __DIR__ . '/notify_config.php';
+    if (file_exists($file)) {
+        $cfg = require $file;
+    } else {
+        $cfg = ['enabled' => false, 'token' => '', 'topic' => ''];
+    }
+    return $cfg;
+}
+
+// 推送单期开奖结果到微信（PushPlus）。未启用或没填 token 时静默跳过。
+function notifyPush($type, $row)
+{
+    $cfg = notifyConfig();
+    if (empty($cfg['enabled']) || empty($cfg['token'])) {
+        return;   // 未启用 / 无 token：不推送，不报错
+    }
+    $name  = $type === 'ssq' ? '福利双色球' : '体彩大乐透';
+    $title = "{$name} 第 {$row['issue']} 期开奖结果";
+    $redStr   = implode(' ', explode(',', $row['red']));
+    $blueStr  = implode(' ', explode(',', $row['blue']));
+    $content  = "红球：<b>{$redStr}</b><br>蓝球：<b>{$blueStr}</b><br>开奖时间：{$row['open_time']}";
+    $payload  = json_encode([
+        'token'    => $cfg['token'],
+        'title'    => $title,
+        'content'  => $content,
+        'template' => 'html',
+        'topic'    => $cfg['topic'] ?? '',
+    ], JSON_UNESCAPED_UNICODE);
+
+    $ch = curl_init('https://www.pushplus.plus/send');
+    curl_setopt_array($ch, [
+        CURLOPT_POST           => true,
+        CURLOPT_RETURNTRANSFER => true,
+        CURLOPT_TIMEOUT        => 10,
+        CURLOPT_HTTPHEADER     => ['Content-Type: application/json; charset=utf-8'],
+        CURLOPT_POSTFIELDS     => $payload,
+        CURLOPT_SSL_VERIFYPEER => false,
+        CURLOPT_SSL_VERIFYHOST => false,
+    ]);
+    $resp = curl_exec($ch);
+    $code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    curl_close($ch);
+
+    $ok = false;
+    if ($code == 200 && $resp) {
+        $j = json_decode($resp, true);
+        $ok = isset($j['code']) && (int)$j['code'] == 200;
+    }
+    echo date('Y-m-d H:i:s') . " [notify] PushPlus 推送 {$type} 第{$row['issue']}期 → "
+        . ($ok ? 'OK' : "FAIL(HTTP {$code})") . "\n";
 }
