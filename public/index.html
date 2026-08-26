@@ -155,12 +155,22 @@
   .btn-cancel { background:#ecf0f1; color:#333; }
   .btn-submit { background:#e74c3c; color:#fff; }
   .btn-submit:hover { background:#c0392b; }
+  /* 推送订阅抽屉 */
+  .sub-body { padding:10px 2px; overflow-y:auto; flex:1 1 auto; }
+  .sub-tip { font-size:12px; color:#666; line-height:1.6; margin:0 0 12px; }
+  .sub-tip a { color:#2471a3; }
+  .sub-body label { display:block; font-size:13px; color:#555; margin:10px 0 4px; }
+  .sub-body input { width:100%; border:1px solid #ddd; border-radius:6px; padding:8px; font-size:13px; box-sizing:border-box; }
+  .sub-body .scheme-select { width:100%; }
+  .sub-foot { font-size:12px; color:#999; margin-top:12px; text-align:center; }
+  .sub-foot a { color:#e74c3c; cursor:pointer; }
 </style>
 </head>
 <body>
 <header>
   <h1>彩票开奖统计</h1>
   <button class="fb-btn" id="openFb">意见</button>
+  <button class="fb-btn" id="openSub">推送通知</button>
   <div class="tabs">
     <button class="tab active" data-type="ssq">福利双色球</button>
     <button class="tab" data-type="dlt">体彩大乐透</button>
@@ -233,6 +243,28 @@
   </div>
   <div class="fb-list" id="fbList"><div class="fb-empty">加载中...</div></div>
   <button class="fb-btn fb-add" id="openFbModal">我要反馈</button>
+</aside>
+
+<!-- 推送订阅抽屉 -->
+<div class="drawer-mask" id="subMask"></div>
+<aside class="feedback-area" id="subDrawer">
+  <div class="feedback-head">
+    <h2>开奖推送通知</h2>
+    <button class="fb-close" id="subClose">&times;</button>
+  </div>
+  <div class="sub-body">
+    <p class="sub-tip">填写你的 <b>息知</b> key，开奖结果与开奖日选号建议将推送到你的微信。<br>注册并获取 key：<a href="https://xizhi.qqoq.net" target="_blank" rel="noopener">xizhi.qqoq.net</a></p>
+    <label>息知 key</label>
+    <input type="text" id="subKey" maxlength="64" placeholder="例如 XZd9447e94f7d7e1b05ee9025617264662" autocomplete="off">
+    <label>开奖日推送方案（选号建议用）</label>
+    <select id="subScheme" class="scheme-select"></select>
+    <button class="fb-add" id="subBtn">订阅推送</button>
+    <div class="err" id="subErr"></div>
+    <div class="sub-foot">
+      当前已有 <b id="subCount">0</b> 人订阅 ·
+      <a id="subUnsub">取消订阅</a>
+    </div>
+  </div>
 </aside>
 
 <!-- 反馈弹窗 -->
@@ -731,6 +763,65 @@ document.getElementById('fbSubmit').addEventListener('click', async () => {
   } finally {
     btn.disabled = false; btn.textContent = '提交';
   }
+});
+
+// ---------- 开奖推送订阅 ----------
+const subDrawer = document.getElementById('subDrawer');
+const subMask   = document.getElementById('subMask');
+const subKey    = document.getElementById('subKey');
+const subScheme = document.getElementById('subScheme');
+const subErr    = document.getElementById('subErr');
+const subBtn    = document.getElementById('subBtn');
+
+// 用前端 SCHEMES 填充方案下拉框（与「选号方案」生成功能同一来源）
+subScheme.innerHTML = Object.entries(SCHEMES)
+  .map(([k, v]) => `<option value="${k}">${v.name}</option>`).join('');
+
+function openSub() { subDrawer.classList.add('show'); subMask.classList.add('show'); loadSubCount(); }
+function closeSub() { subDrawer.classList.remove('show'); subMask.classList.remove('show'); }
+document.getElementById('openSub').addEventListener('click', openSub);
+document.getElementById('subClose').addEventListener('click', closeSub);
+subMask.addEventListener('click', closeSub);
+
+async function loadSubCount() {
+  try {
+    const d = await (await fetch(`${apiBase}?action=subscriber_count`)).json();
+    if (d.code === 1) document.getElementById('subCount').textContent = d.count;
+  } catch (e) { /* 忽略 */ }
+}
+
+subBtn.addEventListener('click', async () => {
+  const key = subKey.value.trim();
+  if (!key) { subErr.style.color = ''; subErr.textContent = '请填写息知 key'; return; }
+  subBtn.disabled = true; subBtn.textContent = '订阅中...';
+  try {
+    const fd = new FormData();
+    fd.append('key', key);
+    fd.append('scheme', subScheme.value);
+    const d = await (await fetch(`${apiBase}?action=subscribe`, { method: 'POST', body: fd })).json();
+    if (d.code === 1) {
+      subErr.style.color = '#27ae60'; subErr.textContent = d.msg || '订阅成功';
+      subKey.value = ''; await loadSubCount();
+    } else {
+      subErr.style.color = ''; subErr.textContent = d.msg || '订阅失败';
+    }
+  } catch (e) {
+    subErr.style.color = ''; subErr.textContent = '提交失败：无法连接服务器，请确认后端接口 /api/index.php 已部署可访问';
+  } finally {
+    subBtn.disabled = false; subBtn.textContent = '订阅推送';
+    setTimeout(() => { subErr.textContent = ''; subErr.style.color = ''; }, 3500);
+  }
+});
+
+document.getElementById('subUnsub').addEventListener('click', async () => {
+  const key = subKey.value.trim();
+  if (!key) { subErr.style.color = ''; subErr.textContent = '请先填写要取消的息知 key'; return; }
+  try {
+    const d = await (await fetch(`${apiBase}?action=unsubscribe&key=${encodeURIComponent(key)}`)).json();
+    subErr.style.color = d.code === 1 ? '#27ae60' : '';
+    subErr.textContent = d.msg || '';
+    await loadSubCount();
+  } catch (e) { subErr.style.color = ''; subErr.textContent = '操作失败'; }
 });
 </script>
 </body>
