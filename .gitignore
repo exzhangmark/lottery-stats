@@ -3,3 +3,4 @@ data/*.sqlite
 data/*.db
 *.log
 .DS_Store
+notify_config.php
