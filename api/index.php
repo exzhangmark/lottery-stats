@@ -12,75 +12,20 @@ header('Access-Control-Allow-Origin: *');
 
 $action = $_GET['action'] ?? '';
 $type   = $_GET['type']   ?? '';
-$range  = $_GET['range']  ?? 'all';
-$allowedRanges = ['all', 'month', 'year', 'lastyear', '3y', '5y', '10y', 'history'];
-if (!in_array($range, $allowedRanges)) {
-    $range = 'all';
-}
 
-if (!in_array($type, ['ssq', 'dlt'])) {
+// 仅 list / stats 需要 type 参数；订阅类接口不依赖 type
+if (in_array($action, ['list', 'stats'], true) && !in_array($type, ['ssq', 'dlt'])) {
     echo json_encode(['code' => 400, 'msg' => 'type 参数错误']);
     exit;
-}
-
-// 根据时间范围计算出 open_time 的过滤窗口（[start, end)，end 为 null 表示到当前为止）
-function rangeWindow($r)
-{
-    $now = new DateTime();
-    switch ($r) {
-        case 'month':    return [$now->format('Y-m-01'), null];
-        case 'year':     return [$now->format('Y') . '-01-01', null];
-        case 'lastyear':
-            $y = (int)$now->format('Y') - 1;
-            return [$y . '-01-01', ($y + 1) . '-01-01'];
-        case '3y':  return [(clone $now)->modify('-3 years')->format('Y-m-d'), null];
-        case '5y':  return [(clone $now)->modify('-5 years')->format('Y-m-d'), null];
-        case '10y': return [(clone $now)->modify('-10 years')->format('Y-m-d'), null];
-        case 'history': return [null, $now->format('Y') . '-01-01'];   // 今年之前的全部历史（不含今年），供"历史复刻"方案内部使用
-        case 'all':
-        default:    return [null, null];
-    }
 }
 
 $pdo = db();
 
 if ($action === 'list') {
-    list($start, $end) = rangeWindow($range);
-
-    // 组合过滤条件 + 占位符（彩种 + 时间范围）
-    $cond  = "type = ?";
-    $binds = [$type];
-    if ($start !== null) { $cond .= " AND date(open_time) >= date(?)"; $binds[] = $start; }
-    if ($end   !== null) { $cond .= " AND date(open_time) < date(?)";  $binds[] = $end;   }
-
-    // 分页参数：每页 10/20/50/100，默认 20
-    $pageSize = (int)($_GET['pageSize'] ?? 20);
-    if (!in_array($pageSize, [10, 20, 50, 100], true)) $pageSize = 20;
-    $page   = max(1, (int)($_GET['page'] ?? 1));
-    $offset = ($page - 1) * $pageSize;
-
-    // 总数（用于前端分页）
-    $cStmt = $pdo->prepare("SELECT COUNT(*) FROM results WHERE {$cond}");
-    $cStmt->execute($binds);
-    $total = (int)$cStmt->fetchColumn();
-
-    // 本页数据（LIMIT/OFFSET 用 PARAM_INT 绑定，避免字符串被 SQLite 拒绝）
-    $sql = "SELECT issue, red, blue, open_time FROM results WHERE {$cond} ORDER BY issue DESC LIMIT ? OFFSET ?";
-    $stmt = $pdo->prepare($sql);
-    $p = 1;
-    foreach ($binds as $b) { $stmt->bindValue($p++, $b, PDO::PARAM_STR); }
-    $stmt->bindValue($p++, $pageSize, PDO::PARAM_INT);
-    $stmt->bindValue($p++, $offset,   PDO::PARAM_INT);
-    $stmt->execute();
+    $stmt = $pdo->prepare("SELECT issue, red, blue, open_time FROM results WHERE type=? ORDER BY issue DESC LIMIT 200");
+    $stmt->execute([$type]);
     $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
-
-    echo json_encode([
-        'code'     => 1,
-        'data'     => $rows,
-        'page'     => $page,
-        'pageSize' => $pageSize,
-        'total'    => $total,
-    ]);
+    echo json_encode(['code' => 1, 'data' => $rows]);
     exit;
 }
 
@@ -89,49 +34,26 @@ if ($action === 'stats') {
     $redMax  = $type === 'ssq' ? 33 : 35;
     $blueMax = $type === 'ssq' ? 16 : 12;
 
-    list($start, $end) = rangeWindow($range);
-    $sql = "SELECT red, blue FROM results WHERE type=?";
-    $params = [$type];
-    if ($start !== null) { $sql .= " AND date(open_time) >= date(?)"; $params[] = $start; }
-    if ($end   !== null) { $sql .= " AND date(open_time) < date(?)";  $params[] = $end;   }
-    $sql .= " ORDER BY issue DESC";   // 最新一期在前，用于计算遗漏值
-    $stmt = $pdo->prepare($sql);
-    $stmt->execute($params);
+    $stmt = $pdo->prepare("SELECT red, blue FROM results WHERE type=?");
+    $stmt->execute([$type]);
     $redCount  = array_fill(1, $redMax, 0);
     $blueCount = array_fill(1, $blueMax, 0);
-    // 遗漏值：号码距最近一次开出隔了多少期（0 = 最新一期就开出；null = 该范围内从未开出）
-    $redOmit  = array_fill(1, $redMax, null);
-    $blueOmit = array_fill(1, $blueMax, null);
-    $idx = 0;   // 期序号，0 = 最新一期
     while ($r = $stmt->fetch(PDO::FETCH_ASSOC)) {
         foreach (explode(',', $r['red']) as $n) {
             $n = (int)$n;
-            if ($n >= 1 && $n <= $redMax) {
-                $redCount[$n]++;
-                if ($redOmit[$n] === null) $redOmit[$n] = $idx;   // 第一次遇到即最近一次开出
-            }
+            if ($n >= 1 && $n <= $redMax) $redCount[$n]++;
         }
         foreach (explode(',', $r['blue']) as $n) {
             $n = (int)$n;
-            if ($n >= 1 && $n <= $blueMax) {
-                $blueCount[$n]++;
-                if ($blueOmit[$n] === null) $blueOmit[$n] = $idx;
-            }
+            if ($n >= 1 && $n <= $blueMax) $blueCount[$n]++;
         }
-        $idx++;
     }
-    $totalDraws = $idx;
-    // 该范围内从未开出的号码，遗漏值 = 范围内总期数
-    for ($n = 1; $n <= $redMax;  $n++) if ($redOmit[$n]  === null) $redOmit[$n]  = $totalDraws;
-    for ($n = 1; $n <= $blueMax; $n++) if ($blueOmit[$n] === null) $blueOmit[$n] = $totalDraws;
     echo json_encode([
         'code'      => 1,
         'redMax'    => $redMax,
         'blueMax'   => $blueMax,
         'redCount'  => $redCount,
         'blueCount' => $blueCount,
-        'redOmit'   => $redOmit,
-        'blueOmit'  => $blueOmit,
     ]);
     exit;
 }
@@ -169,6 +91,59 @@ if ($action === 'feedback_add') {
     $stmt = $pdo->prepare("INSERT INTO feedback (nickname, content, ip) VALUES (?,?,?)");
     $stmt->execute([$nickname ?: '匿名', $content, $ip]);
     echo json_encode(['code' => 1, 'msg' => '感谢反馈，已入库']);
+    exit;
+}
+
+// ---------- 推送订阅：提交（POST）----------
+if ($action === 'subscribe') {
+    if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
+        echo json_encode(['code' => 405, 'msg' => '请使用 POST 提交']);
+        exit;
+    }
+    $ip = $_SERVER['REMOTE_ADDR'] ?? 'unknown';
+    // 频限：每 IP 每小时最多 10 次订阅（防刷）
+    $now = time(); $win = 3600; $max = 10;
+    $pdo->prepare("DELETE FROM sub_rate WHERE ts < ?")->execute([$now - $win]);
+    $stmt = $pdo->prepare("SELECT COUNT(*) FROM sub_rate WHERE ip=? AND ts>=?");
+    $stmt->execute([$ip, $now - $win]);
+    if ((int)$stmt->fetchColumn() >= $max) {
+        echo json_encode(['code' => 429, 'msg' => '操作过于频繁，请稍后再试']);
+        exit;
+    }
+    $pdo->prepare("INSERT INTO sub_rate (ip, ts) VALUES (?,?)")->execute([$ip, $now]);
+
+    $key = trim($_POST['key'] ?? '');
+    $scheme = trim($_POST['scheme'] ?? 'cold');
+    $SCHEMES = ['cold', 'hot', 'mixed', 'omit', 'balance', 'avg', 'repeat', 'lucky', 'flat'];
+    if (!preg_match('/^[A-Za-z0-9]{8,64}$/', $key)) {
+        echo json_encode(['code' => 422, 'msg' => '息知 key 格式不正确（应为 8-64 位字母/数字）']);
+        exit;
+    }
+    if (!in_array($scheme, $SCHEMES, true)) $scheme = 'cold';
+    // 幂等：同一 key 重复订阅则更新偏好方案并恢复状态
+    $pdo->prepare("INSERT INTO subscribers (xizhi_key, scheme, ip, status, created_at) VALUES (?,?,?,1,datetime('now','localtime')) ON CONFLICT(xizhi_key) DO UPDATE SET scheme=excluded.scheme, status=1, created_at=datetime('now','localtime')")
+        ->execute([$key, $scheme, $ip]);
+    echo json_encode(['code' => 1, 'msg' => '订阅成功，开奖结果与开奖日选号建议将推送到你的息知']);
+    exit;
+}
+
+// ---------- 推送订阅：取消（GET/POST）----------
+if ($action === 'unsubscribe') {
+    $key = trim($_GET['key'] ?? ($_POST['key'] ?? ''));
+    if (!preg_match('/^[A-Za-z0-9]{8,64}$/', $key)) {
+        echo json_encode(['code' => 422, 'msg' => 'key 格式不正确']);
+        exit;
+    }
+    $pdo->prepare("UPDATE subscribers SET status=0 WHERE xizhi_key=?")->execute([$key]);
+    echo json_encode(['code' => 1, 'msg' => '已取消订阅']);
+    exit;
+}
+
+// ---------- 推送订阅：当前订阅人数 ----------
+if ($action === 'subscriber_count') {
+    $stmt = $pdo->prepare("SELECT COUNT(*) FROM subscribers WHERE status=1");
+    $stmt->execute();
+    echo json_encode(['code' => 1, 'count' => (int)$stmt->fetchColumn()]);
     exit;
 }
 
