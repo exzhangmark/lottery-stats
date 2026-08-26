@@ -33,6 +33,27 @@ function db()
         ip TEXT,
         created_at TEXT DEFAULT (datetime('now','localtime'))
     )");
+    // 推送订阅表：访客在网站填入自己的息知 key + 偏好的选号方案，开奖/开奖日提醒时一并推送
+    $pdo->exec("CREATE TABLE IF NOT EXISTS subscribers (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        xizhi_key TEXT NOT NULL,
+        scheme TEXT NOT NULL DEFAULT 'cold',
+        ip TEXT,
+        status INTEGER DEFAULT 1,
+        created_at TEXT DEFAULT (datetime('now','localtime')),
+        UNIQUE(xizhi_key)
+    )");
+    // 通用键值表：用于记录「提醒推送防重复」的日期标记等
+    $pdo->exec("CREATE TABLE IF NOT EXISTS meta (
+        k TEXT PRIMARY KEY,
+        v TEXT
+    )");
+    // 订阅接口频限表（每 IP 每小时最多 N 次）
+    $pdo->exec("CREATE TABLE IF NOT EXISTS sub_rate (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        ip TEXT NOT NULL,
+        ts INTEGER NOT NULL
+    )");
     return $pdo;
 }
 
