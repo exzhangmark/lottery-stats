@@ -529,8 +529,8 @@ function maybePushReminder()
     if (empty($cfg['enabled'])) return;
     if ((int)date('G') !== 12) return;   // 仅开奖日 12:00 触发（worker 每 10 分钟轮询，命中即推，meta 表防当日重复）
     $w = (int)date('w');   // 0=周日 .. 6=周六
-    // 双色球：周一(1)周三(3)周日(0)；大乐透：周二(2)周四(4)周六(6)；周五(5)无开奖
-    $drawMap = ['ssq' => [0, 1, 3], 'dlt' => [2, 4, 6]];
+    // 双色球：周二(2)周四(4)周日(0，即用户说的“7”)；大乐透：周一(1)周三(3)周六(6)
+    $drawMap = ['ssq' => [2, 4, 0], 'dlt' => [1, 3, 6]];
     $today = [];
     foreach ($drawMap as $type => $days) if (in_array($w, $days, true)) $today[] = $type;
     if (empty($today)) return;
