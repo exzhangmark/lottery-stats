@@ -230,12 +230,12 @@
     </section>
 
     <section class="panel" id="panel-dlt">
-      <div class="section-title">红球出现次数（1-35）</div>
+      <div class="section-title">前区出现次数（1-35）</div>
       <div class="balls" id="dlt-red"></div>
-      <div class="section-title">蓝球出现次数（1-12）</div>
+      <div class="section-title">后区出现次数（1-12）</div>
       <div class="balls" id="dlt-blue"></div>
       <div class="section-title">开奖列表</div>
-      <table><thead><tr><th>期号</th><th>红球</th><th>蓝球</th><th>开奖时间</th></tr></thead>
+      <table><thead><tr><th>期号</th><th>前区</th><th>后区</th><th>开奖时间</th></tr></thead>
         <tbody id="dlt-list"><tr><td colspan="4" class="loading">加载中...</td></tr></tbody></table>
       <div class="pager" id="dlt-pager"></div>
     </section>
@@ -585,7 +585,7 @@ async function generatePick() {
     // 各彩种规则：双色球 6红(1-33)+1蓝(1-16)；大乐透 5红(1-35)+2蓝(1-12)
     const rule = type === 'ssq'
       ? { redN: 6, blueN: 1, redMax: 33, blueMax: 16, redLabel: '红球（1-33 选 6 个，不重复）', blueLabel: '蓝球（1-16 选 1 个）' }
-      : { redN: 5, blueN: 2, redMax: 35, blueMax: 12, redLabel: '红球（1-35 选 5 个，不重复）', blueLabel: '蓝球（1-12 选 2 个，不重复）' };
+      : { redN: 5, blueN: 2, redMax: 35, blueMax: 12, redLabel: '前区（1-35 选 5 个，不重复）', blueLabel: '后区（1-12 选 2 个，不重复）' };
 
     const redEntries  = countEntries(stats.redCount);
     const blueEntries = countEntries(stats.blueCount);
@@ -674,8 +674,8 @@ async function generatePick() {
 
     const box = document.getElementById('genResult');
     box.innerHTML =
-      `<div class="gen-meta">${TYPE_LABELS[type]} · ${RANGE_LABELS[range] || range} · ${scheme.name}` +
-        `<span class="gen-sub">（${scheme.desc}）</span></div>` +
+      `<div class="gen-meta">${TYPE_LABELS[type]} · ${scheme.name}` +
+        `<span class="gen-sub">（${scheme.desc} · 时间范围：${RANGE_LABELS[range] || range}）</span></div>` +
       `<div class="gen-row-label">${rule.redLabel}</div>` +
       `<div class="balls" id="gen-red"></div>` +
       `<div class="gen-row-label">${rule.blueLabel}</div>` +
