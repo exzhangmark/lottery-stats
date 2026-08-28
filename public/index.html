@@ -74,6 +74,11 @@
   .gen-btn:hover { background:#1e8449; }
   .gen-btn:disabled { opacity:.6; cursor:not-allowed; }
   .gen-tip { font-size:12px; color:#999; }
+  .gen-disclaimer {
+    margin:10px 20px 0; padding:8px 12px;
+    font-size:12px; line-height:1.6; color:#b06a00;
+    background:#fff8e8; border:1px solid #f3d99b; border-radius:6px;
+  }
   /* 生成结果卡片 */
   .gen-result {
     display:none; margin:16px 20px 0; padding:14px 16px;
@@ -206,6 +211,7 @@
   <button class="gen-btn" id="genBtn">生成</button>
   <span class="gen-tip">按当前「彩种 + 时间范围」的数据生成，同值随机打散，可反复生成</span>
 </div>
+<div class="gen-disclaimer">免责声明：本工具所有生成号码均基于历史数据的趣味分析，开奖结果完全随机，本页面不对任何投注结果负责；请理性购彩，切勿沉迷。</div>
 
 <!-- 生成结果（点击生成后显示） -->
 <div class="gen-result" id="genResult"></div>
