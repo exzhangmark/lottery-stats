@@ -9,7 +9,7 @@
  *   0 12 * * * /usr/bin/php /www/wwwroot/lottery/worker/push_reminder.php >> /www/wwwroot/lottery/data/reminder.log 2>&1
  *
  * 说明：
- *   - 仅当今天是双色球(周一/三/日)或大乐透(周二/四/六)开奖日时才推送，周五无开奖自动跳过；
+ *   - 仅当今天是双色球(周二/四/日)或大乐透(周一/三/六)开奖日(12:00)时才推送；
  *   - 推送对象 = 站点 owner（notify_config.php 的 owner_key）+ 网站订阅的访客（subscribers 表）；
  *   - 每个收件人按其偏好方案（owner 用 default_scheme，访客用订阅时选择的 scheme）生成号码；
  *   - 用 meta 表记录「当天已推」，避免同一天重复推送（脚本可安全重复执行）。
