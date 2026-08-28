@@ -522,12 +522,12 @@ function pushDrawResult($type, $row)
     }
 }
 
-// 开奖日 12:00 提醒：按星期判断当日开奖彩种，按各收件人偏好方案生成号码并推送（当日仅一次）
+// 开奖日 7:00 提醒：按星期判断当日开奖彩种，按各收件人偏好方案生成号码并推送（当日仅一次）
 function maybePushReminder()
 {
     $cfg = notifyConfig();
     if (empty($cfg['enabled'])) return;
-    if ((int)date('G') !== 12) return;   // 仅开奖日 12:00 触发（worker 每 10 分钟轮询，命中即推，meta 表防当日重复）
+    if ((int)date('G') !== 7) return;   // 仅开奖日 7:00 触发（worker 每 10 分钟轮询，命中即推，meta 表防当日重复）
     $w = (int)date('w');   // 0=周日 .. 6=周六
     // 双色球：周二(2)周四(4)周日(0，即用户说的“7”)；大乐透：周一(1)周三(3)周六(6)
     $drawMap = ['ssq' => [2, 4, 0], 'dlt' => [1, 3, 6]];
@@ -552,7 +552,7 @@ function maybePushReminder()
             $content = "方案：{$schemeName}\n红球：" . implode(' ', $gen['red'])
                 . "\n蓝球：" . implode(' ', $gen['blue'])
                 . ($gen['note'] ? "\n注：{$gen['note']}" : '')
-                . "\n\n开奖日 " . $date . " 12:00 推送，仅供参考";
+                . "\n\n开奖日 " . $date . " 7:00 推送，仅供参考";
             $res = xizhiSend($rc['key'], $title, $content);
             echo date('Y-m-d H:i:s') . " [reminder] {$type}/{$scheme} → "
                 . ($res['ok'] ? 'OK' : 'FAIL ' . $res['msg']) . "\n";
