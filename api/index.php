@@ -128,7 +128,7 @@ if ($action === 'subscribe') {
         }
         $pdo->prepare("INSERT INTO sub_rate (ip, ts) VALUES (?,?)")->execute([$ip, $now]);
         // 幂等：同一 key 重复订阅则更新偏好方案 / 时间范围并恢复状态
-        $pdo->prepare("INSERT INTO subscribers (xizhi_key, scheme, range, draw_push, ip, status, created_at) VALUES (?,?,?,?,?,1,datetime('now','localtime')) ON CONFLICT(xizhi_key) DO UPDATE SET scheme=excluded.scheme, range=excluded.range, draw_push=excluded.draw_push, status=1, created_at=datetime('now','localtime')")
+        $pdo->prepare("INSERT INTO subscribers (xizhi_key, scheme, stat_range, draw_push, ip, status, created_at) VALUES (?,?,?,?,?,1,datetime('now','localtime')) ON CONFLICT(xizhi_key) DO UPDATE SET scheme=excluded.scheme, stat_range=excluded.stat_range, draw_push=excluded.draw_push, status=1, created_at=datetime('now','localtime')")
             ->execute([$key, $scheme, $range, $drawPush, $ip]);
     } catch (\Throwable $e) {
         // 明确返回 DB 错误，避免连接被 reset 导致浏览器只看到 ERR_CONNECTION_CLOSED

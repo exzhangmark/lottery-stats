@@ -534,12 +534,12 @@ function allRecipients($forDraw = false)
     }
     try {
         $pdo = db();
-        $sql = "SELECT xizhi_key, scheme, COALESCE(draw_push,1) AS draw_push, COALESCE(range,'year') AS range FROM subscribers WHERE status=1";
+        $sql = "SELECT xizhi_key, scheme, COALESCE(draw_push,1) AS draw_push, COALESCE(stat_range,'year') AS stat_range FROM subscribers WHERE status=1";
         if ($forDraw) $sql .= " AND draw_push=1";
         $stmt = $pdo->query($sql);
         while ($r = $stmt->fetch(PDO::FETCH_ASSOC)) {
             if (!empty($r['xizhi_key'])) {
-                $list[] = ['key' => $r['xizhi_key'], 'scheme' => $r['scheme'] ?? 'cold', 'range' => $r['range'] ?? 'year', 'who' => 'sub'];
+                $list[] = ['key' => $r['xizhi_key'], 'scheme' => $r['scheme'] ?? 'cold', 'stat_range' => $r['stat_range'] ?? 'year', 'who' => 'sub'];
             }
         }
     } catch (Exception $e) { /* 表尚未创建时忽略 */ }
@@ -588,7 +588,7 @@ function maybePushReminder()
         foreach (allRecipients() as $rc) {
             $scheme = $rc['scheme'] ?? 'cold';
             // 优先用订阅者自己选的时间范围，其次站点默认范围
-            $range = $rc['range'] ?? ($cfg['default_range'] ?? 'year');
+            $range = $rc['stat_range'] ?? ($cfg['default_range'] ?? 'year');
             $gen = generateNumbers($type, $scheme, $range);
             $schemeName = SCHEME_NAMES[$scheme] ?? $scheme;
             $rangeName  = RANGE_LABELS[$range]  ?? $range;

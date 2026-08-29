@@ -39,7 +39,7 @@ function db()
         xizhi_key TEXT NOT NULL,
         scheme TEXT NOT NULL DEFAULT 'cold',
         draw_push INTEGER NOT NULL DEFAULT 1,
-        range TEXT NOT NULL DEFAULT 'year',
+        stat_range TEXT NOT NULL DEFAULT 'year',
         ip TEXT,
         status INTEGER DEFAULT 1,
         created_at TEXT DEFAULT (datetime('now','localtime')),
@@ -50,8 +50,12 @@ function db()
         $pdo->exec("ALTER TABLE subscribers ADD COLUMN draw_push INTEGER NOT NULL DEFAULT 1");
     } catch (\Throwable $e) { /* 列已存在，忽略 */ }
     try {
-        $pdo->exec("ALTER TABLE subscribers ADD COLUMN range TEXT NOT NULL DEFAULT 'year'");
-    } catch (\Throwable $e) { /* 列已存在， 忽略 */ }
+        // 兼容更早的保留字 bug：若旧库曾用 range 作列名（SQLite 保留字，会报 SQL 语法错误），重命名为 stat_range
+        $pdo->exec("ALTER TABLE subscribers RENAME COLUMN range TO stat_range");
+    } catch (\Throwable $e) { /* 旧列不存在或已改名，忽略 */ }
+    try {
+        $pdo->exec("ALTER TABLE subscribers ADD COLUMN stat_range TEXT NOT NULL DEFAULT 'year'");
+    } catch (\Throwable $e) { /* 列已存在，忽略 */ }
     // 通用键值表：用于记录「提醒推送防重复」的日期标记等
     $pdo->exec("CREATE TABLE IF NOT EXISTS meta (
         k TEXT PRIMARY KEY,
