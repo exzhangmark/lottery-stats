@@ -74,6 +74,11 @@
   .gen-btn:hover { background:#1e8449; }
   .gen-btn:disabled { opacity:.6; cursor:not-allowed; }
   .gen-tip { font-size:12px; color:#999; }
+  .gen-disclaimer {
+    margin:10px 20px 0; padding:8px 12px;
+    font-size:12px; line-height:1.6; color:#b06a00;
+    background:#fff8e8; border:1px solid #f3d99b; border-radius:6px;
+  }
   /* 生成结果卡片 */
   .gen-result {
     display:none; margin:16px 20px 0; padding:14px 16px;
@@ -155,12 +160,24 @@
   .btn-cancel { background:#ecf0f1; color:#333; }
   .btn-submit { background:#e74c3c; color:#fff; }
   .btn-submit:hover { background:#c0392b; }
+  /* 推送订阅抽屉 */
+  .sub-body { padding:10px 2px; overflow-y:auto; flex:1 1 auto; }
+  .sub-tip { font-size:12px; color:#666; line-height:1.6; margin:0 0 12px; }
+  .sub-tip a { color:#2471a3; }
+  .sub-body label { display:block; font-size:13px; color:#555; margin:10px 0 4px; }
+  .sub-body input { width:100%; border:1px solid #ddd; border-radius:6px; padding:8px; font-size:13px; box-sizing:border-box; }
+  .sub-body .scheme-select { width:100%; }
+  .sub-switch { display:flex; align-items:center; justify-content:space-between; font-size:13px; color:#555; margin:12px 0 4px; cursor:pointer; }
+  .sub-switch input { width:auto; margin:0; }
+  .sub-foot { font-size:12px; color:#999; margin-top:12px; text-align:center; }
+  .sub-foot a { color:#e74c3c; cursor:pointer; }
 </style>
 </head>
 <body>
 <header>
   <h1>彩票开奖统计</h1>
   <button class="fb-btn" id="openFb">意见</button>
+  <button class="fb-btn" id="openSub">推送通知</button>
   <div class="tabs">
     <button class="tab active" data-type="ssq">福利双色球</button>
     <button class="tab" data-type="dlt">体彩大乐透</button>
@@ -194,6 +211,7 @@
   <button class="gen-btn" id="genBtn">生成</button>
   <span class="gen-tip">按当前「彩种 + 时间范围」的数据生成，同值随机打散，可反复生成</span>
 </div>
+<div class="gen-disclaimer">免责声明：本工具所有生成号码均基于历史数据的趣味分析，开奖结果完全随机，本页面不对任何投注结果负责；请理性购彩，切勿沉迷。</div>
 
 <!-- 生成结果（点击生成后显示） -->
 <div class="gen-result" id="genResult"></div>
@@ -212,12 +230,12 @@
     </section>
 
     <section class="panel" id="panel-dlt">
-      <div class="section-title">红球出现次数（1-35）</div>
+      <div class="section-title">前区出现次数（1-35）</div>
       <div class="balls" id="dlt-red"></div>
-      <div class="section-title">蓝球出现次数（1-12）</div>
+      <div class="section-title">后区出现次数（1-12）</div>
       <div class="balls" id="dlt-blue"></div>
       <div class="section-title">开奖列表</div>
-      <table><thead><tr><th>期号</th><th>红球</th><th>蓝球</th><th>开奖时间</th></tr></thead>
+      <table><thead><tr><th>期号</th><th>前区</th><th>后区</th><th>开奖时间</th></tr></thead>
         <tbody id="dlt-list"><tr><td colspan="4" class="loading">加载中...</td></tr></tbody></table>
       <div class="pager" id="dlt-pager"></div>
     </section>
@@ -233,6 +251,29 @@
   </div>
   <div class="fb-list" id="fbList"><div class="fb-empty">加载中...</div></div>
   <button class="fb-btn fb-add" id="openFbModal">我要反馈</button>
+</aside>
+
+<!-- 推送订阅抽屉 -->
+<div class="drawer-mask" id="subMask"></div>
+<aside class="feedback-area" id="subDrawer">
+  <div class="feedback-head">
+    <h2>开奖推送通知</h2>
+    <button class="fb-close" id="subClose">&times;</button>
+  </div>
+  <div class="sub-body">
+    <p class="sub-tip">填写你的 <b>息知</b> key，开奖结果与开奖日选号建议将推送到你的微信。<br>注册并获取 key：<a href="https://xz.qqoq.net" target="_blank" rel="noopener">xz.qqoq.net</a></p>
+    <label>息知 key</label>
+    <input type="text" id="subKey" maxlength="64" placeholder="例如 XZd9447e94f7d7e1b05ee9025617264662" autocomplete="off">
+    <label>开奖日推送方案（选号建议用）</label>
+    <select id="subScheme" class="scheme-select"></select>
+    <label class="sub-switch"><span>接收开奖结果推送</span><input type="checkbox" id="subDrawPush" checked></label>
+    <button class="fb-add" id="subBtn">订阅推送</button>
+    <div class="err" id="subErr"></div>
+    <div class="sub-foot">
+      当前已有 <b id="subCount">0</b> 人订阅 ·
+      <a id="subUnsub">取消订阅</a>
+    </div>
+  </div>
 </aside>
 
 <!-- 反馈弹窗 -->
@@ -544,7 +585,7 @@ async function generatePick() {
     // 各彩种规则：双色球 6红(1-33)+1蓝(1-16)；大乐透 5红(1-35)+2蓝(1-12)
     const rule = type === 'ssq'
       ? { redN: 6, blueN: 1, redMax: 33, blueMax: 16, redLabel: '红球（1-33 选 6 个，不重复）', blueLabel: '蓝球（1-16 选 1 个）' }
-      : { redN: 5, blueN: 2, redMax: 35, blueMax: 12, redLabel: '红球（1-35 选 5 个，不重复）', blueLabel: '蓝球（1-12 选 2 个，不重复）' };
+      : { redN: 5, blueN: 2, redMax: 35, blueMax: 12, redLabel: '前区（1-35 选 5 个，不重复）', blueLabel: '后区（1-12 选 2 个，不重复）' };
 
     const redEntries  = countEntries(stats.redCount);
     const blueEntries = countEntries(stats.blueCount);
@@ -633,8 +674,8 @@ async function generatePick() {
 
     const box = document.getElementById('genResult');
     box.innerHTML =
-      `<div class="gen-meta">${TYPE_LABELS[type]} · ${RANGE_LABELS[range] || range} · ${scheme.name}` +
-        `<span class="gen-sub">（${scheme.desc}）</span></div>` +
+      `<div class="gen-meta">${TYPE_LABELS[type]} · ${scheme.name}` +
+        `<span class="gen-sub">（${scheme.desc} · 时间范围：${RANGE_LABELS[range] || range}）</span></div>` +
       `<div class="gen-row-label">${rule.redLabel}</div>` +
       `<div class="balls" id="gen-red"></div>` +
       `<div class="gen-row-label">${rule.blueLabel}</div>` +
@@ -731,6 +772,66 @@ document.getElementById('fbSubmit').addEventListener('click', async () => {
   } finally {
     btn.disabled = false; btn.textContent = '提交';
   }
+});
+
+// ---------- 开奖推送订阅 ----------
+const subDrawer = document.getElementById('subDrawer');
+const subMask   = document.getElementById('subMask');
+const subKey    = document.getElementById('subKey');
+const subScheme = document.getElementById('subScheme');
+const subErr    = document.getElementById('subErr');
+const subBtn    = document.getElementById('subBtn');
+
+// 用前端 SCHEMES 填充方案下拉框（与「选号方案」生成功能同一来源）
+subScheme.innerHTML = Object.entries(SCHEMES)
+  .map(([k, v]) => `<option value="${k}">${v.name}</option>`).join('');
+
+function openSub() { subDrawer.classList.add('show'); subMask.classList.add('show'); loadSubCount(); }
+function closeSub() { subDrawer.classList.remove('show'); subMask.classList.remove('show'); }
+document.getElementById('openSub').addEventListener('click', openSub);
+document.getElementById('subClose').addEventListener('click', closeSub);
+subMask.addEventListener('click', closeSub);
+
+async function loadSubCount() {
+  try {
+    const d = await (await fetch(`${apiBase}?action=subscriber_count`)).json();
+    if (d.code === 1) document.getElementById('subCount').textContent = d.count;
+  } catch (e) { /* 忽略 */ }
+}
+
+subBtn.addEventListener('click', async () => {
+  const key = subKey.value.trim();
+  if (!key) { subErr.style.color = ''; subErr.textContent = '请填写息知 key'; return; }
+  subBtn.disabled = true; subBtn.textContent = '订阅中...';
+  try {
+    const fd = new FormData();
+    fd.append('key', key);
+    fd.append('scheme', subScheme.value);
+    fd.append('draw_push', document.getElementById('subDrawPush').checked ? '1' : '0');
+    const d = await (await fetch(`${apiBase}?action=subscribe`, { method: 'POST', body: fd })).json();
+    if (d.code === 1) {
+      subErr.style.color = '#27ae60'; subErr.textContent = d.msg || '订阅成功';
+      subKey.value = ''; await loadSubCount();
+    } else {
+      subErr.style.color = ''; subErr.textContent = d.msg || '订阅失败';
+    }
+  } catch (e) {
+    subErr.style.color = ''; subErr.textContent = '提交失败：无法连接服务器，请确认后端接口 /api/index.php 已部署可访问';
+  } finally {
+    subBtn.disabled = false; subBtn.textContent = '订阅推送';
+    setTimeout(() => { subErr.textContent = ''; subErr.style.color = ''; }, 3500);
+  }
+});
+
+document.getElementById('subUnsub').addEventListener('click', async () => {
+  const key = subKey.value.trim();
+  if (!key) { subErr.style.color = ''; subErr.textContent = '请先填写要取消的息知 key'; return; }
+  try {
+    const d = await (await fetch(`${apiBase}?action=unsubscribe&key=${encodeURIComponent(key)}`)).json();
+    subErr.style.color = d.code === 1 ? '#27ae60' : '';
+    subErr.textContent = d.msg || '';
+    await loadSubCount();
+  } catch (e) { subErr.style.color = ''; subErr.textContent = '操作失败'; }
 });
 </script>
 </body>

@@ -9,31 +9,19 @@
 
 // ---------- 配置 ----------
 // 数据源按数组顺序作为优先级：任一成功即采用，全部失败才 1 小时后重试。
-// 双色球(ssq)主源：福彩官网 cwl.gov.cn（仅福彩，不含体彩）
-// 大乐透(dlt)主源：体彩官网 lottery.gov.cn（数据接口 webapi.sporttery.cn，gameNo=85）—— 官方源，优先级最高
+// 主源：福彩官网 cwl.gov.cn（仅覆盖福利彩票，如双色球；不含体彩大乐透）
 // 备用：huiniao、caipiaodate（两者均覆盖双色球与大乐透，负责兜底）
 //
 // URL 中的 %d 为页码占位符；paginate=false 的源不分页（仅取最新一页）。
 $CONFIG = [
     'apis' => [
-        'official_cwl' => [
-            'name'     => 'cwl.gov.cn (福彩官方)',
-            // 该接口忽略分页参数，单次请求即返回全部历史（实测 2055 期）。
-            // 因此不能当作分页源（否则 backfill 翻页终止条件永不触发，会一直翻到 MAX_PAGES）。
-            // 设为非分页源：一次取回全量，由 backfill/worker 按日期窗口过滤 + (type,issue) 去重。
-            'ssq'      => 'https://www.cwl.gov.cn/cwl_admin/front/cwlkj/search/kjxx/findDrawNotice?name=ssq',
+        'official' => [
+            'name'     => 'cwl.gov.cn',
+            'ssq'      => 'https://www.cwl.gov.cn/cwl_admin/front/cwlkj/search/kjxx/findDrawNotice?name=ssq&currentPage=%d&pageSize=20',
             'dlt'      => null,   // 福彩官网不含体彩大乐透，自动跳过，回退备用源
             'parse'    => 'parseCwl',
             'headers'  => ['Referer: http://www.cwl.gov.cn/'],
-            'paginate' => false,
-        ],
-        'official_tiyu' => [
-            'name'     => 'lottery.gov.cn (体彩官方)',
-            'ssq'      => null,   // 体彩官网不含福利彩票双色球，自动跳过
-            'dlt'      => 'https://webapi.sporttery.cn/gateway/lottery/getHistoryPageListV1.qry?gameNo=85&provinceId=0&pageSize=30&isVerify=1&pageNo=%d&termLimits=0',
-            'parse'    => 'parseTiyu',
-            'headers'  => ['Referer: https://www.lottery.gov.cn/kj/kjlb.html?dlt'],
-            'paginate' => true,   // %d 映射到 pageNo，配合 backfill 翻页回填历史
+            'paginate' => true,
         ],
         'backup1' => [
             'name'     => 'huiniao',
@@ -140,37 +128,7 @@ function parseCwl($json, $type)
             'issue'     => $issue,
             'red'       => implode(',', $red),
             'blue'      => implode(',', $blue),
-            // cwl 的 date 形如 "2026-08-23(日)"，需剥掉括号内星期，否则 strtotime 解析失败
-            'open_time' => $item['openTime'] ?? $item['open_time'] ?? (isset($item['date']) ? preg_replace('/\(.*?\)/u', '', trim($item['date'])) : null),
-        ];
-    }
-    return $rows;
-}
-
-// 解析 体彩官网 lottery.gov.cn 返回（数据接口 webapi.sporttery.cn）
-// 典型结构：{"errorCode":"0","success":true,"value":{"list":[{"lotteryDrawNum":"26096","lotteryDrawResult":"08 09 10 11 25 04 12","lotteryDrawTime":"2026-08-24",...}],"pages":98,"total":2914}}
-// lotteryDrawResult 为空格分隔：前 5 个为前区(红)，后 2 个为后区(蓝)
-function parseTiyu($json, $type)
-{
-    if (($json['errorCode'] ?? null) !== '0' && ($json['success'] ?? false) !== true) return false;
-    $value = $json['value'] ?? null;
-    if (!is_array($value)) return false;
-    $list = $value['list'] ?? [];
-    if (empty($list)) return false;
-    $rows = [];
-    foreach ($list as $item) {
-        $issue  = $item['lotteryDrawNum'] ?? null;
-        $result = $item['lotteryDrawResult'] ?? '';
-        if (!$issue || !$result) continue;
-        $nums = array_values(array_filter(explode(' ', preg_replace('/\s+/', ' ', trim($result))), 'strlen'));
-        if (count($nums) < 7) continue;          // 大乐透需 5 前区 + 2 后区
-        $red   = array_map('intval', array_slice($nums, 0, 5));
-        $blue  = array_map('intval', array_slice($nums, 5, 2));
-        $rows[] = [
-            'issue'     => $issue,
-            'red'       => implode(',', $red),
-            'blue'      => implode(',', $blue),
-            'open_time' => $item['lotteryDrawTime'] ?? null,
+            'open_time' => $item['openTime'] ?? $item['open_time'] ?? $item['date'] ?? null,
         ];
     }
     return $rows;
@@ -250,7 +208,358 @@ function fetchLatest($type)
         }
         $saved = saveRows($type, $rows);
         echo date('Y-m-d H:i:s') . " [{$type}] {$api['name']} 成功，抓取 " . count($rows) . " 期，新增 {$saved} 期\n";
+        // 抓到新增开奖数据 → 通过息知推送最新一期给 owner + 所有订阅者。rows[0] 为该页最新一期。
+        if ($saved > 0 && !empty($rows[0])) {
+            pushDrawResult($type, $rows[0]);
+        }
         return true;
     }
     return false;
+}
+
+// ---------- 推送（息知 / 个人微信） ----------
+// 配置见 notify_config.php（由 notify_config.example.php 复制而来，含私密 owner_key，已 gitignore）
+// 息知接口：GET https://xizhi.qqoq.net/{key}.send?title=标题&content=内容
+function notifyConfig()
+{
+    static $cfg = null;
+    if ($cfg !== null) return $cfg;
+    $file = __DIR__ . '/notify_config.php';
+    if (file_exists($file)) {
+        $cfg = require $file;
+    } else {
+        $cfg = ['enabled' => false, 'owner_key' => '', 'default_scheme' => 'cold'];
+    }
+    return $cfg;
+}
+
+// 各方案中文名（与前端 public/index.html 的 SCHEMES 保持一致）
+const SCHEME_NAMES = [
+    'cold'    => '冷门预选',
+    'hot'     => '热门预选',
+    'mixed'   => '冷热结合',
+    'omit'    => '遗漏值优先',
+    'balance' => '随机均衡',
+    'avg'     => '均值回归',
+    'repeat'  => '历史复刻',
+    'lucky'   => '吉利玄学',
+    'flat'    => '躺平机选',
+];
+
+// ---------- 选号算法（与前端 public/index.html 的 SCHEMES 逻辑一一对应） ----------
+function php_countEntries($counts)
+{
+    $e = [];
+    foreach ($counts as $k => $v) $e[] = [(int)$k, (int)$v];
+    return $e;
+}
+
+// 冷门预选 / 热门预选：cold=true 取次数最少，否则取最多；次数并列随机打散；输出升序
+function pickNumbers($entries, $n, $cold)
+{
+    $arr = array_map(function ($e) {
+        return ['num' => $e[0], 'c' => $e[1], 'r' => mt_rand() / getrandmax()];
+    }, $entries);
+    usort($arr, function ($a, $b) use ($cold) {
+        $cmp = $cold ? ($a['c'] <=> $b['c']) : ($b['c'] <=> $a['c']);
+        return $cmp !== 0 ? $cmp : ($a['r'] <=> $b['r']);
+    });
+    $sel = array_slice($arr, 0, $n);
+    usort($sel, function ($a, $b) { return $a['num'] <=> $b['num']; });
+    return array_column($sel, 'num');
+}
+
+// 冷热结合：一半取最热、一半取最冷；奇数个时多出的 1 个随机分给某一侧；去重 + 不足补齐
+function pickMixed($entries, $n)
+{
+    $half = intdiv($n, 2);
+    $hotTake = $half; $coldTake = $half;
+    if ($n % 2 === 1) { if (mt_rand(0, 1) === 0) $hotTake++; else $coldTake++; }
+    $sorted = array_map(function ($e) {
+        return ['num' => $e[0], 'c' => $e[1], 'r' => mt_rand() / getrandmax()];
+    }, $entries);
+    usort($sorted, function ($a, $b) {
+        $cmp = $b['c'] <=> $a['c']; return $cmp !== 0 ? $cmp : ($a['r'] <=> $b['r']);
+    });
+    $picks = array_slice($sorted, 0, $hotTake);
+    if ($coldTake > 0) $picks = array_merge($picks, array_slice($sorted, -$coldTake));
+    $seen = []; $uniq = [];
+    foreach ($picks as $p) { if (!in_array($p['num'], $seen, true)) { $seen[] = $p['num']; $uniq[] = $p; } }
+    foreach ($sorted as $p) { if (count($uniq) >= $n) break; if (!in_array($p['num'], $seen, true)) { $seen[] = $p['num']; $uniq[] = $p; } }
+    usort($uniq, function ($a, $b) { return $a['num'] <=> $b['num']; });
+    return array_column(array_slice($uniq, 0, $n), 'num');
+}
+
+// 遗漏值优先：取遗漏期数最长（最久未开出）的号码；同遗漏随机打散
+function pickOmit($omitEntries, $n)
+{
+    $arr = array_map(function ($e) {
+        return ['num' => $e[0], 'c' => (int)($e[1] ?: 0), 'r' => mt_rand() / getrandmax()];
+    }, $omitEntries);
+    usort($arr, function ($a, $b) {
+        $cmp = $b['c'] <=> $a['c']; return $cmp !== 0 ? $cmp : ($a['r'] <=> $b['r']);
+    });
+    $sel = array_slice($arr, 0, $n);
+    usort($sel, function ($a, $b) { return $a['num'] <=> $b['num']; });
+    return array_column($sel, 'num');
+}
+
+// 随机均衡：1~maxNum 均分 n 段，每段随机取 1 个
+function pickBalanced($maxNum, $n)
+{
+    $picks = []; $segSize = (int)ceil($maxNum / $n);
+    for ($s = 0; $s < $n; $s++) {
+        $lo = $s * $segSize + 1;
+        $hi = min($maxNum, ($s + 1) * $segSize);
+        if ($lo > $maxNum) break;
+        $picks[] = mt_rand($lo, $hi);
+    }
+    sort($picks);
+    return $picks;
+}
+
+// 均值回归：取出现次数与全体平均值之差绝对值最小的号码
+function pickAverage($entries, $n)
+{
+    $counts = array_column($entries, 1);
+    $avg = $counts ? array_sum($counts) / count($counts) : 0;
+    $arr = array_map(function ($e) use ($avg) {
+        return ['num' => $e[0], 'c' => $e[1], 'd' => abs($e[1] - $avg), 'r' => mt_rand() / getrandmax()];
+    }, $entries);
+    usort($arr, function ($a, $b) {
+        $cmp = $a['d'] <=> $b['d']; return $cmp !== 0 ? $cmp : ($a['r'] <=> $b['r']);
+    });
+    $sel = array_slice($arr, 0, $n);
+    usort($sel, function ($a, $b) { return $a['num'] <=> $b['num']; });
+    return array_column($sel, 'num');
+}
+
+// 吉利玄学：T1 号码含 6/8；T2 数位和=6/8；T3 其它；同层随机
+function luckyTier($num)
+{
+    $s = (string)$num;
+    if (strpos($s, '6') !== false || strpos($s, '8') !== false) return 0;
+    $sum = array_sum(str_split($s));
+    if ($sum === 6 || $sum === 8) return 1;
+    return 2;
+}
+function pickLucky($maxNum, $n)
+{
+    $arr = [];
+    for ($num = 1; $num <= $maxNum; $num++) $arr[] = ['num' => $num, 't' => luckyTier($num), 'r' => mt_rand() / getrandmax()];
+    usort($arr, function ($a, $b) {
+        $cmp = $a['t'] <=> $b['t']; return $cmp !== 0 ? $cmp : ($a['r'] <=> $b['r']);
+    });
+    $sel = array_slice($arr, 0, $n);
+    usort($sel, function ($a, $b) { return $a['num'] <=> $b['num']; });
+    return array_column($sel, 'num');
+}
+
+// 躺平机选：全域均匀洗牌取前 n
+function pickFlat($maxNum, $n)
+{
+    $pool = range(1, $maxNum);
+    for ($i = count($pool) - 1; $i > 0; $i--) {
+        $j = mt_rand(0, $i);
+        [$pool[$i], $pool[$j]] = [$pool[$j], $pool[$i]];
+    }
+    $sel = array_slice($pool, 0, $n);
+    sort($sel);
+    return $sel;
+}
+
+// 统计某彩种全量数据：出现次数 + 遗漏期数（最新一期遗漏=0，从未开出=总期数）
+function computeStats($type)
+{
+    $redMax  = $type === 'ssq' ? 33 : 35;
+    $blueMax = $type === 'ssq' ? 16 : 12;
+    $pdo = db();
+    $stmt = $pdo->prepare("SELECT red, blue, issue, open_time FROM results WHERE type=? ORDER BY issue DESC");
+    $stmt->execute([$type]);
+    $redCount  = array_fill(1, $redMax, 0);
+    $blueCount = array_fill(1, $blueMax, 0);
+    $redOmit   = array_fill(1, $redMax, null);
+    $blueOmit  = array_fill(1, $blueMax, null);
+    $rows = []; $idx = 0;
+    while ($r = $stmt->fetch(PDO::FETCH_ASSOC)) {
+        foreach (explode(',', $r['red']) as $n) {
+            $n = (int)$n;
+            if ($n >= 1 && $n <= $redMax) { $redCount[$n]++; if ($redOmit[$n] === null) $redOmit[$n] = $idx; }
+        }
+        foreach (explode(',', $r['blue']) as $n) {
+            $n = (int)$n;
+            if ($n >= 1 && $n <= $blueMax) { $blueCount[$n]++; if ($blueOmit[$n] === null) $blueOmit[$n] = $idx; }
+        }
+        $rows[] = $r; $idx++;
+    }
+    $total = $idx;
+    for ($n = 1; $n <= $redMax; $n++)  if ($redOmit[$n]  === null) $redOmit[$n]  = $total;
+    for ($n = 1; $n <= $blueMax; $n++) if ($blueOmit[$n] === null) $blueOmit[$n] = $total;
+    return ['red' => $redCount, 'blue' => $blueCount, 'redOmit' => $redOmit, 'blueOmit' => $blueOmit, 'rows' => $rows, 'total' => $total];
+}
+
+// 历史开奖（不含今年），供「历史复刻」方案随机抽取
+function historyRows($type)
+{
+    $s = computeStats($type);
+    $cut = date('Y') . '-01-01';
+    $out = [];
+    foreach ($s['rows'] as $r) {
+        if (($r['open_time'] ?? '') < $cut) $out[] = $r;
+    }
+    return $out;
+}
+
+// 按方案生成号码：返回 ['red'=>[...], 'blue'=>[...], 'note'=>'']
+function generateNumbers($type, $scheme)
+{
+    $rule = $type === 'ssq'
+        ? ['redN' => 6, 'blueN' => 1, 'redMax' => 33, 'blueMax' => 16]
+        : ['redN' => 5, 'blueN' => 2, 'redMax' => 35, 'blueMax' => 12];
+    $stats = computeStats($type);
+    $redEntries  = php_countEntries($stats['red']);
+    $blueEntries = php_countEntries($stats['blue']);
+    $note = '';
+    if ($scheme === 'balance') {
+        $reds  = pickBalanced($rule['redMax'], $rule['redN']);
+        $blues = pickBalanced($rule['blueMax'], $rule['blueN']);
+    } elseif ($scheme === 'omit') {
+        if (!empty($stats['redOmit']) && !empty($stats['blueOmit'])) {
+            $reds  = pickOmit(php_countEntries($stats['redOmit']), $rule['redN']);
+            $blues = pickOmit(php_countEntries($stats['blueOmit']), $rule['blueN']);
+        } else {
+            $reds = pickBalanced($rule['redMax'], $rule['redN']);
+            $blues = pickBalanced($rule['blueMax'], $rule['blueN']);
+            $note = '（遗漏值数据缺失，按随机均衡生成）';
+        }
+    } elseif ($scheme === 'mixed') {
+        $reds  = pickMixed($redEntries, $rule['redN']);
+        $blues = pickMixed($blueEntries, $rule['blueN']);
+    } elseif ($scheme === 'avg') {
+        $reds  = pickAverage($redEntries, $rule['redN']);
+        $blues = pickAverage($blueEntries, $rule['blueN']);
+    } elseif ($scheme === 'lucky') {
+        $reds  = pickLucky($rule['redMax'], $rule['redN']);
+        $blues = pickLucky($rule['blueMax'], $rule['blueN']);
+    } elseif ($scheme === 'flat') {
+        $reds  = pickFlat($rule['redMax'], $rule['redN']);
+        $blues = pickFlat($rule['blueMax'], $rule['blueN']);
+    } elseif ($scheme === 'repeat') {
+        $hist = historyRows($type);
+        if ($hist) {
+            $row = $hist[mt_rand(0, count($hist) - 1)];
+            $rNums = explode(',', $row['red']);
+            $bNums = explode(',', $row['blue']);
+            if (count($rNums) === $rule['redN'] && count($bNums) === $rule['blueN']) {
+                $reds = array_map('intval', $rNums);
+                $blues = array_map('intval', $bNums);
+                sort($reds); sort($blues);
+                $note = "（复制自历史第 {$row['issue']} 期）";
+            } else { $reds = $blues = null; }
+        }
+        if (empty($reds)) {
+            $reds  = pickFlat($rule['redMax'], $rule['redN']);
+            $blues = pickFlat($rule['blueMax'], $rule['blueN']);
+            $note  = '（历史数据为空，按随机生成）';
+        }
+    } else { // cold / hot
+        $cold = $scheme === 'cold';
+        $reds  = pickNumbers($redEntries, $rule['redN'], $cold);
+        $blues = pickNumbers($blueEntries, $rule['blueN'], $cold);
+    }
+    return ['red' => $reds, 'blue' => $blues, 'note' => $note];
+}
+
+// ---------- 息知发送（GET） ----------
+function xizhiSend($key, $title, $content)
+{
+    if (!$key) return ['ok' => false, 'msg' => 'empty key'];
+    $url = 'https://xizhi.qqoq.net/' . $key . '.send?title=' . urlencode($title) . '&content=' . urlencode($content);
+    $body = httpGet($url, 10);
+    if ($body === false) return ['ok' => false, 'msg' => 'http fail'];
+    $j = json_decode($body, true);
+    $ok = isset($j['code']) && (int)$j['code'] === 200;
+    return ['ok' => $ok, 'msg' => $ok ? 'OK' : ('FAIL ' . substr($body, 0, 120))];
+}
+
+// 所有收件人：站点 owner（配置中的 owner_key）+ 已订阅访客（subscribers 表）
+// $forDraw=true 时仅返回「开启开奖结果推送」的订阅者（owner 始终包含）
+function allRecipients($forDraw = false)
+{
+    $cfg = notifyConfig();
+    $list = [];
+    if (!empty($cfg['owner_key'])) {
+        $list[] = ['key' => $cfg['owner_key'], 'scheme' => $cfg['default_scheme'] ?? 'cold', 'who' => 'owner'];
+    }
+    try {
+        $pdo = db();
+        $sql = "SELECT xizhi_key, scheme, COALESCE(draw_push,1) AS draw_push FROM subscribers WHERE status=1";
+        if ($forDraw) $sql .= " AND draw_push=1";
+        $stmt = $pdo->query($sql);
+        while ($r = $stmt->fetch(PDO::FETCH_ASSOC)) {
+            if (!empty($r['xizhi_key'])) {
+                $list[] = ['key' => $r['xizhi_key'], 'scheme' => $r['scheme'] ?? 'cold', 'who' => 'sub'];
+            }
+        }
+    } catch (Exception $e) { /* 表尚未创建时忽略 */ }
+    return $list;
+}
+
+// 推送最新一期开奖结果给所有人（worker 抓到新增开奖时调用）
+function pushDrawResult($type, $row)
+{
+    $cfg = notifyConfig();
+    if (empty($cfg['enabled'])) return;
+    $name    = $type === 'ssq' ? '福利双色球' : '体彩大乐透';
+    $title   = "{$name} 第 {$row['issue']} 期开奖结果";
+    $content = "红球：" . str_replace(',', ' ', $row['red'])
+        . "\n蓝球：" . str_replace(',', ' ', $row['blue'])
+        . "\n开奖时间：" . ($row['open_time'] ?? '');
+    foreach (allRecipients(true) as $rc) {
+        $res = xizhiSend($rc['key'], $title, $content);
+        echo date('Y-m-d H:i:s') . " [notify] 开奖推送 {$type} 第{$row['issue']}期 → "
+            . ($res['ok'] ? 'OK' : 'FAIL ' . $res['msg']) . "\n";
+    }
+}
+
+// 开奖日 7:00 提醒：按星期判断当日开奖彩种，按各收件人偏好方案生成号码并推送（当日仅一次）
+function maybePushReminder()
+{
+    $cfg = notifyConfig();
+    if (empty($cfg['enabled'])) return;
+    if ((int)date('G') !== 7) return;   // 仅开奖日 7:00 触发（worker 每 10 分钟轮询，命中即推，meta 表防当日重复）
+    $w = (int)date('w');   // 0=周日 .. 6=周六
+    // 双色球：周二(2)周四(4)周日(0，即用户说的“7”)；大乐透：周一(1)周三(3)周六(6)
+    $drawMap = ['ssq' => [2, 4, 0], 'dlt' => [1, 3, 6]];
+    $today = [];
+    foreach ($drawMap as $type => $days) if (in_array($w, $days, true)) $today[] = $type;
+    if (empty($today)) return;
+    $pdo = db();
+    $date = date('Y-m-d');
+    foreach ($today as $type) {
+        $k = 'last_reminder_' . $type;
+        $stmt = $pdo->prepare("SELECT v FROM meta WHERE k=?");
+        $stmt->execute([$k]);
+        $done = $stmt->fetchColumn();
+        if ($done === $date) continue;   // 当天已推，跳过
+        $name = $type === 'ssq' ? '福利双色球' : '体彩大乐透';
+        $cnt = 0;
+        foreach (allRecipients() as $rc) {
+            $scheme = $rc['scheme'] ?? 'cold';
+            $gen = generateNumbers($type, $scheme);
+            $schemeName = SCHEME_NAMES[$scheme] ?? $scheme;
+            $title = "{$name} 今日开奖 · {$schemeName} 选号建议";
+            $content = "方案：{$schemeName}\n红球：" . implode(' ', $gen['red'])
+                . "\n蓝球：" . implode(' ', $gen['blue'])
+                . ($gen['note'] ? "\n注：{$gen['note']}" : '')
+                . "\n\n开奖日 " . $date . " 7:00 推送，仅供参考";
+            $res = xizhiSend($rc['key'], $title, $content);
+            echo date('Y-m-d H:i:s') . " [reminder] {$type}/{$scheme} → "
+                . ($res['ok'] ? 'OK' : 'FAIL ' . $res['msg']) . "\n";
+            $cnt++;
+        }
+        $pdo->prepare("INSERT INTO meta(k,v) VALUES(?,?) ON CONFLICT(k) DO UPDATE SET v=excluded.v")
+            ->execute([$k, $date]);
+        echo date('Y-m-d H:i:s') . " [reminder] {$type} 共推送 {$cnt} 人\n";
+    }
 }
