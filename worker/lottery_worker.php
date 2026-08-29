@@ -20,6 +20,8 @@ function runFetch()
     global $CONFIG;
     $okSsq = fetchLatest('ssq');
     $okDlt = fetchLatest('dlt');
+    // 开奖日 12:00 选号建议推送（worker 常驻，命中即推；非 12 点 / 非开奖日自动跳过）
+    maybePushReminder();
 
     if (!$okSsq || !$okDlt) {
         echo date('Y-m-d H:i:s') . " 部分彩种抓取失败，1 小时后重试\n";
