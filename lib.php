@@ -246,6 +246,17 @@ const SCHEME_NAMES = [
     'flat'    => '躺平机选',
 ];
 
+// 时间范围中文名（与前端 RANGE_LABELS 保持一致）
+const RANGE_LABELS = [
+    'month'    => '本月',
+    'year'     => '本年',
+    'lastyear' => '去年',
+    '3y'       => '三年内',
+    '5y'       => '五年内',
+    '10y'      => '十年内',
+    'all'      => '全部',
+];
+
 // ---------- 选号算法（与前端 public/index.html 的 SCHEMES 逻辑一一对应） ----------
 function php_countEntries($counts)
 {
@@ -368,15 +379,44 @@ function pickFlat($maxNum, $n)
     return $sel;
 }
 
-// 统计某彩种全量数据：出现次数 + 遗漏期数（最新一期遗漏=0，从未开出=总期数）
-function computeStats($type)
+// 时间范围 → 起止日期窗口（用于按时间窗口统计）。返回 null 表示「全部」。
+// 仅按 open_time 做字符串比较（数据格式为 Y-m-d H:i:s，字典序等价于时间序）。
+function rangeWindow($range)
+{
+    $y = (int)date('Y');
+    switch ($range) {
+        case 'month':    return ['start' => date('Y-m-01'), 'end' => null];
+        case 'year':     return ['start' => $y . '-01-01',  'end' => null];
+        case 'lastyear': return ['start' => ($y - 1) . '-01-01', 'end' => $y . '-01-01'];
+        case '3y':       return ['start' => ($y - 3) . '-01-01', 'end' => null];
+        case '5y':       return ['start' => ($y - 5) . '-01-01', 'end' => null];
+        case '10y':      return ['start' => ($y - 10) . '-01-01', 'end' => null];
+        default:         return null;   // all / 未知 → 不过滤
+    }
+}
+
+// 统计某彩种数据：出现次数 + 遗漏期数（最新一期遗漏=0，从未开出=总期数）
+// $range 支持 month/year/lastyear/3y/5y/10y/all；按 open_time 过滤统计窗口
+function computeStats($type, $range = 'all')
 {
     $redMax  = $type === 'ssq' ? 33 : 35;
     $blueMax = $type === 'ssq' ? 16 : 12;
+    $win = rangeWindow($range);
+    $sql  = "SELECT red, blue, issue, open_time FROM results WHERE type=?";
+    $params = [$type];
+    if ($win) {
+        $sql .= " AND open_time >= ?";
+        $params[] = $win['start'];
+        if ($win['end']) {
+            $sql .= " AND open_time < ?";
+            $params[] = $win['end'];
+        }
+    }
+    $sql .= " ORDER BY issue DESC";
     $pdo = db();
-    $stmt = $pdo->prepare("SELECT red, blue, issue, open_time FROM results WHERE type=? ORDER BY issue DESC");
-    $stmt->execute([$type]);
-    $redCount  = array_fill(1, $redMax, 0);
+    $stmt = $pdo->prepare($sql);
+    $stmt->execute($params);
+    $redCount  = array_fill( 1, $redMax, 0);
     $blueCount = array_fill(1, $blueMax, 0);
     $redOmit   = array_fill(1, $redMax, null);
     $blueOmit  = array_fill(1, $blueMax, null);
@@ -411,12 +451,13 @@ function historyRows($type)
 }
 
 // 按方案生成号码：返回 ['red'=>[...], 'blue'=>[...], 'note'=>'']
-function generateNumbers($type, $scheme)
+// $range 支持 month/year/lastyear/3y/5y/10y/all，仅影响 cold/hot/mixed/omit/avg 的统计窗口
+function generateNumbers($type, $scheme, $range = 'all')
 {
     $rule = $type === 'ssq'
         ? ['redN' => 6, 'blueN' => 1, 'redMax' => 33, 'blueMax' => 16]
         : ['redN' => 5, 'blueN' => 2, 'redMax' => 35, 'blueMax' => 12];
-    $stats = computeStats($type);
+    $stats = computeStats($type, $range);
     $redEntries  = php_countEntries($stats['red']);
     $blueEntries = php_countEntries($stats['blue']);
     $note = '';
@@ -493,12 +534,12 @@ function allRecipients($forDraw = false)
     }
     try {
         $pdo = db();
-        $sql = "SELECT xizhi_key, scheme, COALESCE(draw_push,1) AS draw_push FROM subscribers WHERE status=1";
+        $sql = "SELECT xizhi_key, scheme, COALESCE(draw_push,1) AS draw_push, COALESCE(range,'year') AS range FROM subscribers WHERE status=1";
         if ($forDraw) $sql .= " AND draw_push=1";
         $stmt = $pdo->query($sql);
         while ($r = $stmt->fetch(PDO::FETCH_ASSOC)) {
             if (!empty($r['xizhi_key'])) {
-                $list[] = ['key' => $r['xizhi_key'], 'scheme' => $r['scheme'] ?? 'cold', 'who' => 'sub'];
+                $list[] = ['key' => $r['xizhi_key'], 'scheme' => $r['scheme'] ?? 'cold', 'range' => $r['range'] ?? 'year', 'who' => 'sub'];
             }
         }
     } catch (Exception $e) { /* 表尚未创建时忽略 */ }
@@ -546,15 +587,18 @@ function maybePushReminder()
         $cnt = 0;
         foreach (allRecipients() as $rc) {
             $scheme = $rc['scheme'] ?? 'cold';
-            $gen = generateNumbers($type, $scheme);
+            // 优先用订阅者自己选的时间范围，其次站点默认范围
+            $range = $rc['range'] ?? ($cfg['default_range'] ?? 'year');
+            $gen = generateNumbers($type, $scheme, $range);
             $schemeName = SCHEME_NAMES[$scheme] ?? $scheme;
+            $rangeName  = RANGE_LABELS[$range]  ?? $range;
             $title = "{$name} 今日开奖 · {$schemeName} 选号建议";
-            $content = "方案：{$schemeName}\n红球：" . implode(' ', $gen['red'])
+            $content = "方案：{$schemeName}（统计范围：{$rangeName}）\n红球：" . implode(' ', $gen['red'])
                 . "\n蓝球：" . implode(' ', $gen['blue'])
                 . ($gen['note'] ? "\n注：{$gen['note']}" : '')
                 . "\n\n开奖日 " . $date . " 7:00 推送，仅供参考";
             $res = xizhiSend($rc['key'], $title, $content);
-            echo date('Y-m-d H:i:s') . " [reminder] {$type}/{$scheme} → "
+            echo date('Y-m-d H:i:s') . " [reminder] {$type}/{$scheme}/{$range} → "
                 . ($res['ok'] ? 'OK' : 'FAIL ' . $res['msg']) . "\n";
             $cnt++;
         }

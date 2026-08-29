@@ -33,21 +33,25 @@ function db()
         ip TEXT,
         created_at TEXT DEFAULT (datetime('now','localtime'))
     )");
-    // 推送订阅表：访客在网站填入自己的息知 key + 偏好的选号方案，开奖/开奖日提醒时一并推送
+    // 推送订阅表：访客在网站填入自己的息知 key + 偏好的选号方案 + 时间范围，开奖/开奖日提醒时一并推送
     $pdo->exec("CREATE TABLE IF NOT EXISTS subscribers (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         xizhi_key TEXT NOT NULL,
         scheme TEXT NOT NULL DEFAULT 'cold',
         draw_push INTEGER NOT NULL DEFAULT 1,
+        range TEXT NOT NULL DEFAULT 'year',
         ip TEXT,
         status INTEGER DEFAULT 1,
         created_at TEXT DEFAULT (datetime('now','localtime')),
         UNIQUE(xizhi_key)
     )");
-    // 兼容旧库：已存在 subscribers 表但缺少 draw_push 列时补上（列已存在则忽略报错）
+    // 兼容旧库：已存在 subscribers 表但缺少 draw_push / range 列时补上（列已存在则忽略报错）
     try {
         $pdo->exec("ALTER TABLE subscribers ADD COLUMN draw_push INTEGER NOT NULL DEFAULT 1");
     } catch (\Throwable $e) { /* 列已存在，忽略 */ }
+    try {
+        $pdo->exec("ALTER TABLE subscribers ADD COLUMN range TEXT NOT NULL DEFAULT 'year'");
+    } catch (\Throwable $e) { /* 列已存在， 忽略 */ }
     // 通用键值表：用于记录「提醒推送防重复」的日期标记等
     $pdo->exec("CREATE TABLE IF NOT EXISTS meta (
         k TEXT PRIMARY KEY,

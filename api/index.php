@@ -5,7 +5,8 @@
  * 通过 ?action=list&type=ssq 或 ?action=stats&type=ssq 调用。
  */
 
-require_once __DIR__ . '/../db.php';  // 数据库与意见相关函数（不依赖 Workerman）
+require_once __DIR__ . '/../db.php';   // 数据库与意见相关函数（不依赖 Workerman）
+require_once __DIR__ . '/../lib.php';  // computeStats / rangeWindow 等统计函数
 
 header('Content-Type: application/json; charset=utf-8');
 header('Access-Control-Allow-Origin: *');
@@ -22,38 +23,40 @@ if (in_array($action, ['list', 'stats'], true) && !in_array($type, ['ssq', 'dlt'
 $pdo = db();
 
 if ($action === 'list') {
-    $stmt = $pdo->prepare("SELECT issue, red, blue, open_time FROM results WHERE type=? ORDER BY issue DESC LIMIT 200");
-    $stmt->execute([$type]);
+    $range    = $_GET['range'] ?? 'all';
+    $page     = max(1, (int)($_GET['page'] ?? 1));
+    $pageSize = max(1, min(200, (int)($_GET['pageSize'] ?? 20)));
+    $win = rangeWindow($range);
+    $where = "WHERE type=?";
+    $params = [$type];
+    if ($win) {
+        $where .= " AND open_time >= ?";
+        $params[] = $win['start'];
+        if ($win['end']) { $where .= " AND open_time < ?"; $params[] = $win['end']; }
+    }
+    $total = (int)$pdo->prepare("SELECT COUNT(*) FROM results $where")->execute($params)->fetchColumn();
+    $offset = ($page - 1) * $pageSize;
+    $stmt = $pdo->prepare("SELECT issue, red, blue, open_time FROM results $where ORDER BY issue DESC LIMIT ? OFFSET ?");
+    $stmt->execute(array_merge($params, [(int)$pageSize, (int)$offset]));
     $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
-    echo json_encode(['code' => 1, 'data' => $rows]);
+    echo json_encode(['code' => 1, 'data' => $rows, 'page' => $page, 'pageSize' => $pageSize, 'total' => $total]);
     exit;
 }
 
 if ($action === 'stats') {
-    // 红球总数 / 蓝球总数配置
+    $range = $_GET['range'] ?? 'all';
     $redMax  = $type === 'ssq' ? 33 : 35;
     $blueMax = $type === 'ssq' ? 16 : 12;
-
-    $stmt = $pdo->prepare("SELECT red, blue FROM results WHERE type=?");
-    $stmt->execute([$type]);
-    $redCount  = array_fill(1, $redMax, 0);
-    $blueCount = array_fill(1, $blueMax, 0);
-    while ($r = $stmt->fetch(PDO::FETCH_ASSOC)) {
-        foreach (explode(',', $r['red']) as $n) {
-            $n = (int)$n;
-            if ($n >= 1 && $n <= $redMax) $redCount[$n]++;
-        }
-        foreach (explode(',', $r['blue']) as $n) {
-            $n = (int)$n;
-            if ($n >= 1 && $n <= $blueMax) $blueCount[$n]++;
-        }
-    }
+    $stats = computeStats($type, $range);
     echo json_encode([
         'code'      => 1,
+        'range'     => $range,
         'redMax'    => $redMax,
         'blueMax'   => $blueMax,
-        'redCount'  => $redCount,
-        'blueCount' => $blueCount,
+        'redCount'  => $stats['red'],
+        'blueCount' => $stats['blue'],
+        'redOmit'   => $stats['redOmit'],
+        'blueOmit'  => $stats['blueOmit'],
     ]);
     exit;
 }
@@ -103,13 +106,16 @@ if ($action === 'subscribe') {
     $ip = $_SERVER['REMOTE_ADDR'] ?? 'unknown';
     $key = trim($_POST['key'] ?? '');
     $scheme = trim($_POST['scheme'] ?? 'cold');
+    $range  = trim($_POST['range']  ?? 'year');
     $drawPush = ($_POST['draw_push'] ?? '1') === '1' ? 1 : 0;
     $SCHEMES = ['cold', 'hot', 'mixed', 'omit', 'balance', 'avg', 'repeat', 'lucky', 'flat'];
+    $RANGES = ['month', 'year', 'lastyear', '3y', '5y', '10y', 'all'];
     if (!preg_match('/^[A-Za-z0-9]{8,64}$/', $key)) {
         echo json_encode(['code' => 422, 'msg' => '息知 key 格式不正确（应为 8-64 位字母/数字）']);
         exit;
     }
     if (!in_array($scheme, $SCHEMES, true)) $scheme = 'cold';
+    if (!in_array($range, $RANGES, true))  $range  = 'year';
     try {
         // 频限：每 IP 每小时最多 10 次订阅（防刷）
         $now = time(); $win = 3600; $max = 10;
@@ -121,9 +127,9 @@ if ($action === 'subscribe') {
             exit;
         }
         $pdo->prepare("INSERT INTO sub_rate (ip, ts) VALUES (?,?)")->execute([$ip, $now]);
-        // 幂等：同一 key 重复订阅则更新偏好方案并恢复状态
-        $pdo->prepare("INSERT INTO subscribers (xizhi_key, scheme, draw_push, ip, status, created_at) VALUES (?,?,?,?,1,datetime('now','localtime')) ON CONFLICT(xizhi_key) DO UPDATE SET scheme=excluded.scheme, draw_push=excluded.draw_push, status=1, created_at=datetime('now','localtime')")
-            ->execute([$key, $scheme, $drawPush, $ip]);
+        // 幂等：同一 key 重复订阅则更新偏好方案 / 时间范围并恢复状态
+        $pdo->prepare("INSERT INTO subscribers (xizhi_key, scheme, range, draw_push, ip, status, created_at) VALUES (?,?,?,?,?,1,datetime('now','localtime')) ON CONFLICT(xizhi_key) DO UPDATE SET scheme=excluded.scheme, range=excluded.range, draw_push=excluded.draw_push, status=1, created_at=datetime('now','localtime')")
+            ->execute([$key, $scheme, $range, $drawPush, $ip]);
     } catch (\Throwable $e) {
         // 明确返回 DB 错误，避免连接被 reset 导致浏览器只看到 ERR_CONNECTION_CLOSED
         echo json_encode(['code' => 500, 'msg' => '订阅写入失败：' . $e->getMessage()]);

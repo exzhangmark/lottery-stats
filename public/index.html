@@ -266,6 +266,8 @@
     <input type="text" id="subKey" maxlength="64" placeholder="例如 XZd9447e94f7d7e1b05ee9025617264662" autocomplete="off">
     <label>开奖日推送方案（选号建议用）</label>
     <select id="subScheme" class="scheme-select"></select>
+    <label>选号建议统计范围（按时间范围统计冷热/遗漏）</label>
+    <select id="subRange" class="scheme-select"></select>
     <label class="sub-switch"><span>接收开奖结果推送</span><input type="checkbox" id="subDrawPush" checked></label>
     <button class="fb-add" id="subBtn">订阅推送</button>
     <div class="err" id="subErr"></div>
@@ -786,6 +788,10 @@ const subBtn    = document.getElementById('subBtn');
 subScheme.innerHTML = Object.entries(SCHEMES)
   .map(([k, v]) => `<option value="${k}">${v.name}</option>`).join('');
 
+// 用 RANGE_LABELS 填充「统计范围」下拉框（与顶部时间范围按钮同一来源）
+subRange.innerHTML = Object.entries(RANGE_LABELS)
+  .map(([k, v]) => `<option value="${k}"${k === 'year' ? ' selected' : ''}>${v}</option>`).join('');
+
 function openSub() { subDrawer.classList.add('show'); subMask.classList.add('show'); loadSubCount(); }
 function closeSub() { subDrawer.classList.remove('show'); subMask.classList.remove('show'); }
 document.getElementById('openSub').addEventListener('click', openSub);
@@ -807,6 +813,7 @@ subBtn.addEventListener('click', async () => {
     const fd = new FormData();
     fd.append('key', key);
     fd.append('scheme', subScheme.value);
+    fd.append('range', document.getElementById('subRange').value);
     fd.append('draw_push', document.getElementById('subDrawPush').checked ? '1' : '0');
     const d = await (await fetch(`${apiBase}?action=subscribe`, { method: 'POST', body: fd })).json();
     if (d.code === 1) {

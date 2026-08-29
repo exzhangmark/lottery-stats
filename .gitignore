@@ -3,3 +3,5 @@ data/*.sqlite
 data/*.db
 *.log
 .DS_Store
+# 推送配置（含 owner 私人息知 key，禁止提交）
+notify_config.php
