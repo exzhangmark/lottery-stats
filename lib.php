@@ -265,6 +265,7 @@ const SCHEME_NAMES = [
 
 // 时间范围中文名（与前端 RANGE_LABELS 保持一致）
 const RANGE_LABELS = [
+    'earliest' => '最早',
     'month'    => '本月',
     'year'     => '本年',
     'lastyear' => '去年',
@@ -396,12 +397,34 @@ function pickFlat($maxNum, $n)
     return $sel;
 }
 
+// 数据库内某彩种最早的开奖日期（Y-m-d H:i:s）；无数据返回 null
+function earliestOpenTime($type)
+{
+    static $cache = [];
+    if (array_key_exists($type, $cache)) return $cache[$type];
+    $cache[$type] = null;
+    try {
+        $pdo = db();
+        $stmt = $pdo->prepare("SELECT MIN(open_time) FROM results WHERE type=?");
+        $stmt->execute([$type]);
+        $v = $stmt->fetchColumn();
+        if ($v) $cache[$type] = $v;
+    } catch (Exception $e) {
+        // 表尚未就绪时返回 null（= 不过滤）
+    }
+    return $cache[$type];
+}
+
 // 时间范围 → 起止日期窗口（用于按时间窗口统计）。返回 null 表示「全部」。
 // 仅按 open_time 做字符串比较（数据格式为 Y-m-d H:i:s，字典序等价于时间序）。
-function rangeWindow($range)
+// $type 仅在处理 'earliest' 时需要（查该彩种最早开奖日）。
+function rangeWindow($range, $type = null)
 {
     $y = (int)date('Y');
     switch ($range) {
+        case 'earliest':
+            $start = earliestOpenTime($type);
+            return $start ? ['start' => $start, 'end' => null] : null;
         case 'month':    return ['start' => date('Y-m-01'), 'end' => null];
         case 'year':     return ['start' => $y . '-01-01',  'end' => null];
         case 'lastyear': return ['start' => ($y - 1) . '-01-01', 'end' => $y . '-01-01'];
@@ -418,7 +441,7 @@ function computeStats($type, $range = 'all')
 {
     $redMax  = $type === 'ssq' ? 33 : 35;
     $blueMax = $type === 'ssq' ? 16 : 12;
-    $win = rangeWindow($range);
+    $win = rangeWindow($range, $type);
     $sql  = "SELECT red, blue, issue, open_time FROM results WHERE type=?";
     $params = [$type];
     if ($win) {
@@ -718,12 +741,12 @@ function allRecipients($forDraw = false)
     }
     try {
         $pdo = db();
-        $sql = "SELECT xizhi_key, scheme, COALESCE(draw_push,1) AS draw_push, COALESCE(stat_range,'year') AS stat_range FROM subscribers WHERE status=1";
+        $sql = "SELECT xizhi_key, scheme, COALESCE(draw_push,1) AS draw_push, COALESCE(stat_range,'earliest') AS stat_range FROM subscribers WHERE status=1";
         if ($forDraw) $sql .= " AND draw_push=1";
         $stmt = $pdo->query($sql);
         while ($r = $stmt->fetch(PDO::FETCH_ASSOC)) {
             if (!empty($r['xizhi_key'])) {
-                $list[] = ['key' => $r['xizhi_key'], 'scheme' => $r['scheme'] ?? 'cold', 'stat_range' => $r['stat_range'] ?? 'year', 'who' => 'sub'];
+                $list[] = ['key' => $r['xizhi_key'], 'scheme' => $r['scheme'] ?? 'cold', 'stat_range' => $r['stat_range'] ?? 'earliest', 'who' => 'sub'];
             }
         }
     } catch (Exception $e) { /* 表尚未创建时忽略 */ }
@@ -774,7 +797,7 @@ function maybePushReminder()
         foreach (allRecipients() as $rc) {
             $scheme = $rc['scheme'] ?? 'cold';
             // 优先用订阅者自己选的时间范围，其次站点默认范围
-            $range = $rc['stat_range'] ?? ($cfg['default_range'] ?? 'year');
+            $range = $rc['stat_range'] ?? ($cfg['default_range'] ?? 'earliest');
             $gen = generateNumbers($type, $scheme, $range);
             $schemeName = SCHEME_NAMES[$scheme] ?? $scheme;
             $rangeName  = RANGE_LABELS[$range]  ?? $range;

@@ -108,16 +108,16 @@ if ($action === 'subscribe') {
     $ip = $_SERVER['REMOTE_ADDR'] ?? 'unknown';
     $key = trim($_POST['key'] ?? '');
     $scheme = trim($_POST['scheme'] ?? 'cold');
-    $range  = trim($_POST['range']  ?? 'year');
+    $range  = trim($_POST['range']  ?? 'earliest');
     $drawPush = ($_POST['draw_push'] ?? '1') === '1' ? 1 : 0;
     $SCHEMES = ['cold', 'hot', 'mixed', 'omit', 'balance', 'avg', 'repeat', 'lucky', 'flat'];
-    $RANGES = ['month', 'year', 'lastyear', '3y', '5y', '10y', 'all'];
+    $RANGES = ['earliest', 'month', 'year', 'lastyear', '3y', '5y', '10y', 'all'];
     if (!preg_match('/^[A-Za-z0-9]{8,64}$/', $key)) {
         echo json_encode(['code' => 422, 'msg' => '息知 key 格式不正确（应为 8-64 位字母/数字）']);
         exit;
     }
     if (!in_array($scheme, $SCHEMES, true)) $scheme = 'cold';
-    if (!in_array($range, $RANGES, true))  $range  = 'year';
+    if (!in_array($range, $RANGES, true))  $range  = 'earliest';
     try {
         // 频限：每 IP 每小时最多 10 次订阅（防刷）
         $now = time(); $win = 3600; $max = 10;

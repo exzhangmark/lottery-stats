@@ -43,7 +43,7 @@ function db()
         xizhi_key TEXT NOT NULL,
         scheme TEXT NOT NULL DEFAULT 'cold',
         draw_push INTEGER NOT NULL DEFAULT 1,
-        stat_range TEXT NOT NULL DEFAULT 'year',
+        stat_range TEXT NOT NULL DEFAULT 'earliest',
         ip TEXT,
         status INTEGER DEFAULT 1,
         created_at TEXT DEFAULT (datetime('now','localtime')),
@@ -58,7 +58,7 @@ function db()
         $pdo->exec("ALTER TABLE subscribers RENAME COLUMN range TO stat_range");
     } catch (\Throwable $e) { /* 旧列不存在或已改名，忽略 */ }
     try {
-        $pdo->exec("ALTER TABLE subscribers ADD COLUMN stat_range TEXT NOT NULL DEFAULT 'year'");
+        $pdo->exec("ALTER TABLE subscribers ADD COLUMN stat_range TEXT NOT NULL DEFAULT 'earliest'");
     } catch (\Throwable $e) { /* 列已存在，忽略 */ }
     // 选号存档表：每次前端生成的号码都落库，开奖后按 issue 核对中奖
     // red/blue 分别存逗号分隔（便于直接比对命中数），号码整体 = red + blue

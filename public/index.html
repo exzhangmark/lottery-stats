@@ -293,8 +293,9 @@
 
 <div class="range-bar">
   <span class="rb-label">时间范围：</span>
+  <button class="range-btn active" data-range="earliest">最早</button>
   <button class="range-btn" data-range="month">本月</button>
-  <button class="range-btn active" data-range="year">本年</button>
+  <button class="range-btn" data-range="year">本年</button>
   <button class="range-btn" data-range="lastyear">去年</button>
   <button class="range-btn" data-range="3y">三年内</button>
   <button class="range-btn" data-range="5y">五年内</button>
@@ -467,7 +468,7 @@ const apiBase = '/api/index.php';
 
 // 当前选中的彩种 / 时间范围 / 分页状态
 let currentType    = 'ssq';
-let currentRange   = 'year';
+let currentRange   = 'earliest';
 let currentPage    = 1;
 let currentPageSize = 20;
 const statsLoaded = new Set();   // 已加载过的 (type:range) 统计组合，避免重复请求
@@ -601,10 +602,10 @@ document.querySelectorAll('.range-btn').forEach(btn => {
 });
 
 // 默认：双色球 + 本年
-activate('ssq', 'year');
+activate('ssq', 'earliest');
 
 // ---------- 号码生成（冷门预选 / 热门预选 / 冷热结合 / 遗漏值优先 / 随机均衡） ----------
-const RANGE_LABELS = { month:'本月', year:'本年', lastyear:'去年', '3y':'三年内', '5y':'五年内', '10y':'十年内', all:'全部' };
+const RANGE_LABELS = { earliest:'最早', month:'本月', year:'本年', lastyear:'去年', '3y':'三年内', '5y':'五年内', '10y':'十年内', all:'全部' };
 const TYPE_LABELS  = { ssq:'福利双色球', dlt:'体彩大乐透' };
 const SCHEMES = {
   cold:    { name:'冷门预选',   desc:'取该时间范围内出现次数最少的号码' },
@@ -1187,7 +1188,7 @@ subScheme.innerHTML = Object.entries(SCHEMES)
 
 // 用 RANGE_LABELS 填充「统计范围」下拉框（与顶部时间范围按钮同一来源）
 subRange.innerHTML = Object.entries(RANGE_LABELS)
-  .map(([k, v]) => `<option value="${k}"${k === 'year' ? ' selected' : ''}>${v}</option>`).join('');
+  .map(([k, v]) => `<option value="${k}"${k === 'earliest' ? ' selected' : ''}>${v}</option>`).join('');
 
 function openSub() { subDrawer.classList.add('show'); subMask.classList.add('show'); loadSubCount(); }
 function closeSub() { subDrawer.classList.remove('show'); subMask.classList.remove('show'); }
