@@ -253,7 +253,7 @@
   .pick-pager .pg-btn { padding:5px 12px; border:1px solid #d0d7de; background:#fff; border-radius:6px; cursor:pointer; font-size:13px; color:#333; }
   .pick-pager .pg-btn:hover:not(:disabled) { border-color:#e74c3c; color:#e74c3c; }
   .pick-pager .pg-btn:disabled { opacity:.45; cursor:not-allowed; }
-  /* 中奖/未中奖快捷筛选胶囊 + 导出按钮 */
+  /* 中奖/未中奖快捷筛选胶囊 */
   .pf-chips { display:flex; gap:6px; flex-wrap:wrap; }
   .pf-chip {
     padding:5px 12px; border:1px solid #d0d7de; background:#fff; border-radius:16px;
@@ -261,16 +261,10 @@
   }
   .pf-chip:hover { border-color:#e74c3c; color:#e74c3c; }
   .pf-chip.active { background:#e74c3c; border-color:#e74c3c; color:#fff; }
-  .pf-export {
-    margin-left:auto; padding:6px 12px; border:1px solid #2471a3; background:#fff;
-    color:#2471a3; border-radius:6px; cursor:pointer; font-size:13px; white-space:nowrap;
-  }
-  .pf-export:hover { background:#2471a3; color:#fff; }
   /* 手机端：顶栏换行、彩种选择单独一行铺满，避免过长 */
   @media (max-width: 640px) {
     .pf-chips { width:100%; }
     .pf-chip { flex:1 1 auto; text-align:center; padding:6px 8px; }
-    .pf-export { margin-left:0; width:100%; text-align:center; padding:8px 12px; }
     .pick-filter input { flex:1 1 100%; }
     header { flex-wrap:wrap; padding:10px 14px; gap:8px; }
     header h1 { font-size:15px; flex:1 1 100%; margin:0; }
@@ -341,7 +335,15 @@
 <div class="history-mask" id="historyModal" onclick="if(event.target===this)closeHistory()">
   <div class="history-card">
     <button class="rules-close" onclick="closeHistory()">&times;</button>
-    <h3>我的中奖历史（最近 100 条）</h3>
+    <h3>中奖历史（最近 100 条）</h3>
+    <div class="pick-filter">
+      <span class="pf-label">彩种</span>
+      <select id="hsType">
+        <option value="">全部</option>
+        <option value="ssq">福利双色球</option>
+        <option value="dlt">体彩大乐透</option>
+      </select>
+    </div>
     <div class="pick-filter">
       <div class="pf-chips" id="hsChips">
         <button class="pf-chip active" data-status="all">全部</button>
@@ -349,7 +351,6 @@
         <button class="pf-chip" data-status="unwon">未中奖</button>
         <button class="pf-chip" data-status="pending">待开奖</button>
       </div>
-      <button class="pf-export" id="hsExport">导出 CSV</button>
     </div>
     <div class="history-body"></div>
   </div>
@@ -377,7 +378,6 @@
         <button class="pf-chip" data-status="unwon">未中奖</button>
         <button class="pf-chip" data-status="pending">待开奖</button>
       </div>
-      <button class="pf-export" id="mpExport">导出 CSV</button>
     </div>
     <div class="history-body"></div>
     <div class="pick-pager" id="mpPager"></div>
@@ -1011,23 +1011,8 @@ function bindChips(containerId, onPick) {
     onPick(btn.dataset.status || 'all');
   });
 }
-// 导出 CSV：走后端 export_picks，按当前筛选条件导出（不受分页限制）
-function exportPicks(opt) {
-  const q = new URLSearchParams({ action: 'export_picks', status: opt.status || 'all' });
-  if (opt.issue) q.set('issue', opt.issue);
-  if (opt.ptype) q.set('ptype', opt.ptype);
-  if (opt.limit) q.set('limit', String(opt.limit));
-  const a = document.createElement('a');
-  a.href = `${apiBase}?${q.toString()}`;
-  a.style.display = 'none';
-  document.body.appendChild(a);
-  a.click();
-  a.remove();
-  showToast('已开始导出 CSV，请查看浏览器下载');
-}
-
-// 中奖历史：最近 100 条（拉一次后本地按中奖状态筛选）
-let _hsRows = [], _hsStatus = 'all';
+// 中奖历史：最近 100 条（拉一次后本地按彩种 + 中奖状态筛选）
+let _hsRows = [], _hsStatus = 'all', _hsType = '';
 async function showHistory() {
   const modal = document.getElementById('historyModal');
   const body  = modal.querySelector('.history-body');
@@ -1050,17 +1035,18 @@ function renderHistory() {
                      '<div class="loading">暂无选号记录，先去生成一注吧～</div>';
     return;
   }
-  const rows = _hsRows.filter(r => matchPickStatus(r, _hsStatus));
-  const extra = _hsStatus === 'all' ? '' : ` <span style="color:#888">（当前筛选 ${rows.length} 条）</span>`;
+  const rows = _hsRows.filter(r => matchPickStatus(r, _hsStatus) && (!_hsType || r.type === _hsType));
+  const extra = (_hsStatus === 'all' && !_hsType) ? '' : ` <span style="color:#888">（当前筛选 ${rows.length} 条）</span>`;
   const stat = `<div class="history-stat">最近 <b>${_hsRows.length}</b> 条选号记录 · ${renderPickStat(statFromRows(rows))}${extra}</div>`;
-  if (!rows.length) { body.innerHTML = stat + '<div class="loading">没有符合该状态的记录</div>'; return; }
+  if (!rows.length) { body.innerHTML = stat + '<div class="loading">没有符合筛选条件的记录</div>'; return; }
   body.innerHTML = stat + `<div class="history-list">${rows.map(renderPickItem).join('')}</div>`;
 }
 function closeHistory() { document.getElementById('historyModal').classList.remove('show'); }
 document.getElementById('openHistory').addEventListener('click', showHistory);
 bindChips('hsChips', s => { _hsStatus = s; renderHistory(); });
-document.getElementById('hsExport').addEventListener('click', () => {
-  exportPicks({ status: _hsStatus, limit: 100 });
+document.getElementById('hsType').addEventListener('change', () => {
+  _hsType = document.getElementById('hsType').value;
+  renderHistory();
 });
 
 // 我的选号记录：按期号 / 彩种 / 中奖状态筛选 + 分页 + 导出
@@ -1099,13 +1085,6 @@ function closeMyPicks() { document.getElementById('myPicksModal').classList.remo
 document.getElementById('openMyPicks').addEventListener('click', () => showMyPicks(1));
 document.getElementById('mpType').addEventListener('change', () => showMyPicks(1));
 bindChips('mpChips', s => { _mpStatus = s; showMyPicks(1); });
-document.getElementById('mpExport').addEventListener('click', () => {
-  exportPicks({
-    status: _mpStatus,
-    issue: document.getElementById('mpIssue').value.trim(),
-    ptype: document.getElementById('mpType').value,
-  });
-});
 document.getElementById('mpIssue').addEventListener('input', () => {
   clearTimeout(_mpTimer); _mpTimer = setTimeout(() => showMyPicks(1), 300);
 });
