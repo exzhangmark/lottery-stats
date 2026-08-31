@@ -702,7 +702,7 @@ async function generatePick() {
       const redNums  = reds.map(p => p.num);
       const blueNums = blues.map(p => p.num);
       const typeName = type === 'ssq' ? '双色球' : '大乐透';
-      const copyText = typeName + '：' + redNums.join('/') + '+' + blueNums.join('/');
+      const copyText = typeName + '：' + redNums.join('、') + '+' + blueNums.join('、');
       await copyTextToClipboard(copyText);
       showToast('已复制：' + copyText);
     } catch (e) {
