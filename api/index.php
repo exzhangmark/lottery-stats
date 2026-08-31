@@ -11,8 +11,9 @@ require_once __DIR__ . '/../lib.php';  // computeStats / rangeWindow 等统计�
 header('Content-Type: application/json; charset=utf-8');
 header('Access-Control-Allow-Origin: *');
 
-$action = $_GET['action'] ?? '';
-$type   = $_GET['type']   ?? '';
+// action / type 同时支持 GET 与 POST（savePick 等写接口走 POST 请求体）
+$action = $_POST['action'] ?? $_GET['action'] ?? '';
+$type   = $_POST['type']   ?? $_GET['type']   ?? '';
 
 // 仅 list / stats 需要 type 参数；订阅类接口不依赖 type
 if (in_array($action, ['list', 'stats'], true) && !in_array($type, ['ssq', 'dlt'])) {
