@@ -60,6 +60,27 @@ function db()
     try {
         $pdo->exec("ALTER TABLE subscribers ADD COLUMN stat_range TEXT NOT NULL DEFAULT 'year'");
     } catch (\Throwable $e) { /* 列已存在，忽略 */ }
+    // 选号存档表：每次前端生成的号码都落库，开奖后按 issue 核对中奖
+    // red/blue 分别存逗号分隔（便于直接比对命中数），号码整体 = red + blue
+    $pdo->exec("CREATE TABLE IF NOT EXISTS picks (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        type TEXT NOT NULL,            -- ssq / dlt
+        issue TEXT NOT NULL,           -- 目标期号（生成时自动推算的下一期）
+        red TEXT NOT NULL,             -- 红球/前区，逗号分隔，升序
+        blue TEXT NOT NULL,            -- 蓝球/后区，逗号分隔，升序
+        scheme TEXT NOT NULL DEFAULT '',
+        prize_level INTEGER NOT NULL DEFAULT 0,   -- 0=未开奖/未中奖，1..6(ssq)/1..9(dlt)
+        prize_amount INTEGER NOT NULL DEFAULT 0,  -- 中奖金额（元），浮动奖为 0
+        status TEXT NOT NULL DEFAULT 'pending',   -- pending / checked
+        created_at TEXT DEFAULT (datetime('now','localtime')),
+        checked_at TEXT,
+        UNIQUE(type, issue, red, blue, scheme)
+    )");
+    $pdo->exec("CREATE INDEX IF NOT EXISTS picks_issue ON picks(type, issue)");
+    // 兼容旧库：已存在 picks 表但缺新列时补上（列已存在则忽略报错）
+    try { $pdo->exec("ALTER TABLE picks ADD COLUMN status TEXT NOT NULL DEFAULT 'pending'"); } catch (\Throwable $e) { /* 忽略 */ }
+    try { $pdo->exec("ALTER TABLE picks ADD COLUMN checked_at TEXT"); } catch (\Throwable $e) { /* 忽略 */ }
+
     // 通用键值表：用于记录「提醒推送防重复」的日期标记等
     $pdo->exec("CREATE TABLE IF NOT EXISTS meta (
         k TEXT PRIMARY KEY,

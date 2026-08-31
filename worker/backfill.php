@@ -117,6 +117,10 @@ foreach ($types as $type) {
     echo "--- [{$type}] 回填完成，累计新增 {$totalSaved} 期 ---\n\n";
 }
 
+// 回填完成后，补核对所有「尚未核对且对应期号已开奖」的选号存档
+$n = checkAllPendingWins();
+if ($n > 0) echo "已补核对历史选号存档 {$n} 条中奖结果。\n";
+
 echo "全部完成。\n";
 
 // ---------- 辅助函数 ----------

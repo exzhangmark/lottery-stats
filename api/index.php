@@ -164,4 +164,62 @@ if ($action === 'subscriber_count') {
     exit;
 }
 
+// ---------- 选号存档：保存（POST）----------
+if ($action === 'savePick') {
+    if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
+        echo json_encode(['code' => 405, 'msg' => '请使用 POST 提交']);
+        exit;
+    }
+    $type = trim($_POST['type'] ?? '');
+    if (!in_array($type, ['ssq', 'dlt'], true)) {
+        echo json_encode(['code' => 400, 'msg' => 'type 参数错误']);
+        exit;
+    }
+    $red  = isset($_POST['red'])  ? explode(',', $_POST['red'])  : [];
+    $blue = isset($_POST['blue']) ? explode(',', $_POST['blue']) : [];
+    $scheme = trim($_POST['scheme'] ?? 'cold');
+    $SCHEMES = ['cold', 'hot', 'mixed', 'omit', 'balance', 'avg', 'repeat', 'lucky', 'flat'];
+    if (!in_array($scheme, $SCHEMES, true)) $scheme = 'cold';
+    try {
+        $res = savePick($type, $red, $blue, $scheme);
+    } catch (\Throwable $e) {
+        echo json_encode(['code' => 500, 'msg' => '保存失败：' . $e->getMessage()]);
+        exit;
+    }
+    if ($res['ok']) {
+        echo json_encode(['code' => 1, 'issue' => $res['issue'], 'id' => $res['id'], 'msg' => $res['msg']]);
+    } else {
+        echo json_encode(['code' => 0, 'msg' => $res['msg']]);
+    }
+    exit;
+}
+
+// ---------- 中奖规则查询 ----------
+if ($action === 'rules') {
+    if (!in_array($type, ['ssq', 'dlt'], true)) {
+        echo json_encode(['code' => 400, 'msg' => 'type 参数错误']);
+        exit;
+    }
+    $labels = $type === 'ssq'
+        ? ['一等奖', '二等奖', '三等奖', '四等奖', '五等奖', '六等奖']
+        : ['一等奖', '二等奖', '三等奖', '四等奖', '五等奖', '六等奖', '七等奖', '八等奖', '九等奖'];
+    $rules = prizeRules($type);
+    echo json_encode([
+        'code'   => 1,
+        'type'   => $type,
+        'labels' => $labels,
+        'rules'  => array_map(function ($r) use ($labels) {
+            return [
+                'red'        => $r[0],
+                'blue'       => $r[1],
+                'level'      => $r[2],
+                'levelName'  => $labels[$r[2] - 1] ?? ('第' . $r[2] . '奖'),
+                'amount'     => $r[3],
+                'amountText' => $r[3] > 0 ? number_format($r[3]) . '元' : '浮动奖（视奖池/注数）',
+            ];
+        }, $rules),
+    ]);
+    exit;
+}
+
 echo json_encode(['code' => 400, 'msg' => 'action 参数错误']);

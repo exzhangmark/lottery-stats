@@ -212,6 +212,13 @@ function fetchLatest($type)
         if ($saved > 0 && !empty($rows[0])) {
             pushDrawResult($type, $rows[0]);
         }
+        // 每期开奖后，核对针对该期的选号存档并更新中奖结果
+        foreach ($rows as $r) {
+            if (!empty($r['issue'])) {
+                $u = checkWinsForIssue($type, $r['issue'], $r['red'], $r['blue']);
+                if ($u > 0) echo date('Y-m-d H:i:s') . " [{$type}] 第 {$r['issue']} 期核对选号存档 {$u} 条\n";
+            }
+        }
         return true;
     }
     return false;
@@ -519,6 +526,173 @@ function generateNumbers($type, $scheme, $range = 'all')
         $blues = pickNumbers($blueEntries, $rule['blueN'], $cold);
     }
     return ['red' => $reds, 'blue' => $blues, 'note' => $note];
+}
+
+// ---------- 选号存档与中奖核对 ----------
+
+// 中奖规则表：[红球命中数, 蓝球命中数, 奖级, 固定奖金(元)]；奖金为 0 表示浮动奖
+function prizeRules($type)
+{
+    if ($type === 'ssq') {
+        // 双色球：红球6 + 蓝球1。一/二等奖浮动；三~六等奖固定。
+        return [
+            [6, 1, 1, 0], [6, 0, 2, 0],
+            [5, 1, 3, 3000],
+            [5, 0, 4, 200], [4, 1, 4, 200],
+            [4, 0, 5, 10], [3, 1, 5, 10],
+            [2, 1, 6, 5], [1, 1, 6, 5], [0, 1, 6, 5],
+        ];
+    }
+    // 大乐透：前区5 + 后区2。一/二等奖浮动；三~九等奖固定。
+    return [
+        [5, 2, 1, 0], [5, 1, 2, 0],
+        [5, 0, 3, 10000],
+        [4, 2, 4, 3000],
+        [4, 1, 5, 300],
+        [3, 2, 6, 200], [4, 0, 6, 200],
+        [3, 1, 7, 100], [2, 2, 7, 100],
+        [3, 0, 8, 15], [2, 1, 8, 15], [1, 2, 8, 15],
+        [2, 0, 9, 5], [1, 1, 9, 5], [0, 2, 9, 5], [1, 0, 9, 5], [0, 1, 9, 5],
+    ];
+}
+
+// 判定一组选号是否中奖，返回 ['level'=>奖级, 'amount'=>金额]
+function checkPickWin($type, $redPick, $bluePick, $redResult, $blueResult)
+{
+    $redMatch  = count(array_intersect($redPick, $redResult));
+    $blueMatch = count(array_intersect($bluePick, $blueResult));
+    foreach (prizeRules($type) as $r) {
+        if ($r[0] === $redMatch && $r[1] === $blueMatch) {
+            return ['level' => $r[2], 'amount' => $r[3]];
+        }
+    }
+    return ['level' => 0, 'amount' => 0];
+}
+
+// 某期开奖后，核对所有针对该期的选号存档并更新中奖结果
+function checkWinsForIssue($type, $issue, $redResult, $blueResult)
+{
+    $pdo = db();
+    $stmt = $pdo->prepare("SELECT id, red, blue FROM picks WHERE type=? AND issue=?");
+    $stmt->execute([$type, $issue]);
+    $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
+    $redResult  = array_map('intval', explode(',', $redResult));
+    $blueResult = array_map('intval', explode(',', $blueResult));
+    $updated = 0;
+    foreach ($rows as $row) {
+        $redPick  = array_map('intval', explode(',', $row['red']));
+        $bluePick = array_map('intval', explode(',', $row['blue']));
+        $res = checkPickWin($type, $redPick, $bluePick, $redResult, $blueResult);
+        $up = $pdo->prepare("UPDATE picks SET prize_level=?, prize_amount=?, status='checked', checked_at=datetime('now','localtime') WHERE id=?");
+        $up->execute([$res['level'], $res['amount'], $row['id']]);
+        $updated += $up->rowCount();
+    }
+    return $updated;
+}
+
+// 补核对所有「尚未核对」且对应期号已开奖的选号存档（用于回填/修复后手动执行）
+function checkAllPendingWins()
+{
+    $pdo = db();
+    $stmt = $pdo->prepare(
+        "SELECT p.type, p.issue, p.red, p.blue, r.red AS rred, r.blue AS rblue
+         FROM picks p JOIN results r ON r.type=p.type AND r.issue=p.issue
+         WHERE p.status='pending'"
+    );
+    $stmt->execute();
+    $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
+    $n = 0;
+    foreach ($rows as $row) {
+        $res = checkPickWin(
+            $row['type'],
+            array_map('intval', explode(',', $row['red'])),
+            array_map('intval', explode(',', $row['blue'])),
+            array_map('intval', explode(',', $row['rred'])),
+            array_map('intval', explode(',', $row['rblue']))
+        );
+        $up = $pdo->prepare("UPDATE picks SET prize_level=?, prize_amount=?, status='checked', checked_at=datetime('now','localtime') WHERE type=? AND issue=? AND red=? AND blue=?");
+        $up->execute([$res['level'], $res['amount'], $row['type'], $row['issue'], $row['red'], $row['blue']]);
+        $n += $up->rowCount();
+    }
+    return $n;
+}
+
+// 各彩种开奖星期：双色球 周日/二/四（date('w'): 0=周日），大乐透 周一/三/六
+function drawWeekdays($type)
+{
+    return $type === 'ssq' ? [0, 2, 4] : [1, 3, 6];
+}
+
+// 返回 $afterDate 之后第一个开奖日（含跨年）
+function nextDrawDate($type, $afterDate)
+{
+    $wd = drawWeekdays($type);
+    $d = new DateTime($afterDate);
+    for ($i = 0; $i < 14; $i++) {
+        $d->modify('+1 day');
+        if (in_array((int)$d->format('w'), $wd, true)) return $d->format('Y-m-d');
+    }
+    return null;
+}
+
+// 由开奖日推算该年内的期序（issue = 该年自 1/1 起的第几个开奖日，首期为 001）
+function issueForDate($type, $dateStr)
+{
+    $wd = drawWeekdays($type);
+    $dt = new DateTime($dateStr);
+    $year = (int)$dt->format('Y');
+    $start = new DateTime("$year-01-01");
+    $cnt = 0;
+    while ($start <= $dt) {
+        if (in_array((int)$start->format('w'), $wd, true)) $cnt++;
+        $start->modify('+1 day');
+    }
+    return $year . str_pad($cnt, 3, '0', STR_PAD_LEFT);
+}
+
+// 推算下一期期号（基于 results 中最新开奖时间；若无数据则用今天）
+function getNextIssue($type)
+{
+    $pdo = db();
+    $stmt = $pdo->prepare("SELECT open_time FROM results WHERE type=? ORDER BY issue DESC LIMIT 1");
+    $stmt->execute([$type]);
+    $last = $stmt->fetchColumn();
+    $base = $last ? substr($last, 0, 10) : date('Y-m-d');
+    $next = nextDrawDate($type, $base);
+    if (!$next) return null;
+    return issueForDate($type, $next);
+}
+
+// 保存一次选号存档（自动推算目标期号）。返回 ['ok','issue','id','msg']
+function savePick($type, $redArr, $blueArr, $scheme)
+{
+    $redMax  = $type === 'ssq' ? 33 : 35;
+    $blueMax = $type === 'ssq' ? 16 : 12;
+    $redN    = $type === 'ssq' ? 6  : 5;
+    $blueN   = $type === 'ssq' ? 1  : 2;
+    $redArr  = array_values(array_filter(array_map('intval', $redArr),  fn($n) => $n >= 1 && $n <= $redMax));
+    $blueArr = array_values(array_filter(array_map('intval', $blueArr), fn($n) => $n >= 1 && $n <= $blueMax));
+    if (count($redArr) !== $redN || count($blueArr) !== $blueN) {
+        return ['ok' => false, 'msg' => '号码数量不正确'];
+    }
+    if (count(array_unique($redArr)) !== $redN) {
+        return ['ok' => false, 'msg' => '红球/前区存在重复号码'];
+    }
+    sort($redArr); sort($blueArr);
+    $red  = implode(',', $redArr);
+    $blue = implode(',', $blueArr);
+    $issue = getNextIssue($type);
+    if (!$issue) return ['ok' => false, 'msg' => '无法确定目标期号（缺少历史开奖数据）'];
+    $pdo = db();
+    // 幂等：同 (type,issue,red,blue,scheme) 不重复插入
+    $chk = $pdo->prepare("SELECT id FROM picks WHERE type=? AND issue=? AND red=? AND blue=? AND scheme=?");
+    $chk->execute([$type, $issue, $red, $blue, $scheme]);
+    if ($chk->fetchColumn()) {
+        return ['ok' => true, 'id' => 0, 'issue' => $issue, 'msg' => '该方案该期号码已存在，未重复保存'];
+    }
+    $stmt = $pdo->prepare("INSERT INTO picks (type, issue, red, blue, scheme, created_at) VALUES (?,?,?,?,?,datetime('now','localtime'))");
+    $stmt->execute([$type, $issue, $red, $blue, $scheme]);
+    return ['ok' => true, 'id' => $pdo->lastInsertId(), 'issue' => $issue, 'msg' => '已保存'];
 }
 
 // ---------- 息知发送（GET） ----------
