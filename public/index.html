@@ -241,6 +241,18 @@
   .lv-win { color:#e74c3c; font-weight:bold; }
   .lv-none { color:#999; }
   .lv-pending { color:#f39c12; }
+  /* 我的选号记录：筛选条 + 分页 */
+  .pick-filter { display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin-bottom:10px; }
+  .pick-filter .pf-label { font-size:13px; color:#666; }
+  .pick-filter input, .pick-filter select {
+    padding:6px 10px; border:1px solid #d0d7de; border-radius:6px; font-size:13px;
+    color:#333; background:#fff; box-sizing:border-box;
+  }
+  .pick-filter input { flex:1 1 140px; min-width:120px; }
+  .pick-pager { display:flex; align-items:center; justify-content:space-between; margin-top:10px; font-size:13px; color:#555; flex-wrap:wrap; gap:8px; }
+  .pick-pager .pg-btn { padding:5px 12px; border:1px solid #d0d7de; background:#fff; border-radius:6px; cursor:pointer; font-size:13px; color:#333; }
+  .pick-pager .pg-btn:hover:not(:disabled) { border-color:#e74c3c; color:#e74c3c; }
+  .pick-pager .pg-btn:disabled { opacity:.45; cursor:not-allowed; }
   /* 手机端：顶栏换行、彩种选择单独一行铺满，避免过长 */
   @media (max-width: 640px) {
     header { flex-wrap:wrap; padding:10px 14px; gap:8px; }
@@ -260,6 +272,7 @@
     <button class="fb-btn" id="openFb">意见</button>
     <button class="fb-btn" id="openSub">推送通知</button>
     <button class="fb-btn" id="openHistory">中奖历史</button>
+    <button class="fb-btn" id="openMyPicks">我的选号记录</button>
   </div>
 </header>
 <div class="type-bar">
@@ -313,6 +326,27 @@
     <button class="rules-close" onclick="closeHistory()">&times;</button>
     <h3>我的中奖历史（最近 100 条）</h3>
     <div class="history-body"></div>
+  </div>
+</div>
+
+<!-- 我的选号记录弹窗 -->
+<div class="history-mask" id="myPicksModal" onclick="if(event.target===this)closeMyPicks()">
+  <div class="history-card">
+    <button class="rules-close" onclick="closeMyPicks()">&times;</button>
+    <h3>我的选号记录</h3>
+    <div class="pick-filter">
+      <span class="pf-label">期号</span>
+      <input type="text" id="mpIssue" placeholder="如 2026 或 001" autocomplete="off">
+      <span class="pf-label">状态</span>
+      <select id="mpStatus">
+        <option value="all">全部</option>
+        <option value="won">已中奖</option>
+        <option value="unwon">未中奖</option>
+        <option value="pending">待开奖</option>
+      </select>
+    </div>
+    <div class="history-body"></div>
+    <div class="pick-pager" id="mpPager"></div>
   </div>
 </div>
 
@@ -874,7 +908,7 @@ async function showRules(type) {
 }
 function closeRules() { document.getElementById('rulesModal').classList.remove('show'); }
 
-// 中奖历史弹窗：拉取最近 100 条选号存档 + 累计中奖金额
+// 中奖历史 / 我的选号记录：共用渲染
 function prizeLabel(type, level) {
   const max = type === 'ssq' ? 6 : 9;
   return (level >= 1 && level <= max) ? `第${level}奖` : '中奖';
@@ -884,6 +918,35 @@ function fmtNums(type, red, blue) {
   const blues = blue.split(',').map(n => `<span class="blue-num">${n}</span>`).join('、');
   return reds + ' <span style="color:#999">+</span> ' + blues;
 }
+// 单条选号记录卡片
+function renderPickItem(r) {
+  const typeName   = TYPE_LABELS[r.type] || r.type;
+  const schemeName = (SCHEMES[r.scheme] && SCHEMES[r.scheme].name) || r.scheme || '—';
+  const myNums  = fmtNums(r.type, r.red, r.blue);
+  const resNums = (r.res_red || r.res_blue)
+    ? fmtNums(r.type, r.res_red, r.res_blue)
+    : '<span style="color:#999">待开奖</span>';
+  let lv;
+  if (r.status === 'pending')   lv = '<span class="lv-pending">待开奖</span>';
+  else if (r.prize_level > 0)   lv = `<span class="lv-win">${prizeLabel(r.type, r.prize_level)}</span>`;
+  else                          lv = '<span class="lv-none">未中奖</span>';
+  const amt = r.prize_amount > 0 ? `<span class="amt">¥${Number(r.prize_amount).toLocaleString()}</span>` : '—';
+  return `<div class="history-item">
+    <div class="hi-top"><span class="hi-type">${typeName}</span><span class="hi-issue">第${esc(r.issue)}期</span><span class="hi-scheme">${esc(schemeName)}</span></div>
+    <div class="hi-nums"><span class="hi-label">我的</span>${myNums}</div>
+    <div class="hi-nums"><span class="hi-label">开奖</span>${resNums}</div>
+    <div class="hi-bottom"><span>${lv}</span><span>${amt}</span></div>
+  </div>`;
+}
+// 奖级统计：一/二等奖只统计注数（浮动奖无定额），三等奖起显示「注数/共X元」
+function renderPickStat(statArr) {
+  const parts = (statArr || []).map(s => {
+    if (s.level <= 2) return `第${s.level}奖（${s.count}注）`;
+    return `第${s.level}奖（${s.count}注/共${Number(s.amount).toLocaleString()}元）`;
+  });
+  return parts.length ? parts.join('、') : '暂未中奖';
+}
+// 中奖历史：最近 100 条
 async function showHistory() {
   const modal = document.getElementById('historyModal');
   const body  = modal.querySelector('.history-body');
@@ -893,37 +956,53 @@ async function showHistory() {
     const d = await fetch(`${apiBase}?action=history`).then(x => x.json());
     if (d.code !== 1) { body.innerHTML = '<div class="loading">加载失败</div>'; return; }
     const rows = d.data || [];
-    const stat = `<div class="history-stat">最近 <b>${d.count}</b> 条选号记录 · 累计中奖金额 <b class="amt">¥${Number(d.total_amount || 0).toLocaleString()}</b></div>`;
-    if (!rows.length) {
-      body.innerHTML = stat + '<div class="loading">暂无选号记录，先去生成一注吧～</div>';
-      return;
-    }
-    const list = rows.map(r => {
-      const typeName   = TYPE_LABELS[r.type] || r.type;
-      const schemeName = (SCHEMES[r.scheme] && SCHEMES[r.scheme].name) || r.scheme || '—';
-      const myNums     = fmtNums(r.type, r.red, r.blue);
-      const resNums    = (r.res_red || r.res_blue)
-        ? fmtNums(r.type, r.res_red, r.res_blue)
-        : '<span style="color:#999">待开奖</span>';
-      let lv;
-      if (r.status === 'pending')      lv = '<span class="lv-pending">待开奖</span>';
-      else if (r.prize_level > 0)      lv = `<span class="lv-win">${prizeLabel(r.type, r.prize_level)}</span>`;
-      else                             lv = '<span class="lv-none">未中奖</span>';
-      const amt = r.prize_amount > 0 ? `<span class="amt">¥${Number(r.prize_amount).toLocaleString()}</span>` : '—';
-      return `<div class="history-item">
-        <div class="hi-top"><span class="hi-type">${typeName}</span><span class="hi-issue">第${esc(r.issue)}期</span><span class="hi-scheme">${esc(schemeName)}</span></div>
-        <div class="hi-nums"><span class="hi-label">我的</span>${myNums}</div>
-        <div class="hi-nums"><span class="hi-label">开奖</span>${resNums}</div>
-        <div class="hi-bottom"><span>${lv}</span><span>${amt}</span></div>
-      </div>`;
-    }).join('');
-    body.innerHTML = stat + `<div class="history-list">${list}</div>`;
+    const stat = `<div class="history-stat">最近 <b>${d.count}</b> 条选号记录 · ${renderPickStat(d.stat)}</div>`;
+    if (!rows.length) { body.innerHTML = stat + '<div class="loading">暂无选号记录，先去生成一注吧～</div>'; return; }
+    body.innerHTML = stat + `<div class="history-list">${rows.map(renderPickItem).join('')}</div>`;
   } catch (e) {
     body.innerHTML = '<div class="loading">加载失败，请确认后端接口已部署可访问</div>';
   }
 }
 function closeHistory() { document.getElementById('historyModal').classList.remove('show'); }
 document.getElementById('openHistory').addEventListener('click', showHistory);
+
+// 我的选号记录：按期号 / 中奖状态筛选 + 分页
+let _mpPage = 1, _mpTimer = null;
+async function showMyPicks(page) {
+  _mpPage = page || 1;
+  const issue  = document.getElementById('mpIssue').value.trim();
+  const status = document.getElementById('mpStatus').value;
+  const modal  = document.getElementById('myPicksModal');
+  const body   = modal.querySelector('.history-body');
+  const pager  = document.getElementById('mpPager');
+  body.innerHTML = '<div class="loading">加载中...</div>';
+  modal.classList.add('show');
+  try {
+    const url = `${apiBase}?action=my_picks&issue=${encodeURIComponent(issue)}&status=${encodeURIComponent(status)}&page=${_mpPage}&pageSize=50`;
+    const d = await fetch(url).then(x => x.json());
+    if (d.code !== 1) { body.innerHTML = '<div class="loading">加载失败</div>'; return; }
+    const rows = d.data || [];
+    const stat = `<div class="history-stat">共 <b>${d.total}</b> 条选号记录 · ${renderPickStat(d.stat)}</div>`;
+    if (!rows.length) { body.innerHTML = stat + '<div class="loading">没有符合条件的选号记录</div>'; pager.innerHTML = ''; return; }
+    body.innerHTML = stat + `<div class="history-list">${rows.map(renderPickItem).join('')}</div>`;
+    const totalPages = Math.max(1, Math.ceil(d.total / d.pageSize));
+    pager.innerHTML =
+      `<span class="pg-info">第 ${d.page} / ${totalPages} 页（共 ${d.total} 条）</span>` +
+      `<span><button class="pg-btn" id="mpPrev"${d.page <= 1 ? ' disabled' : ''}>上一页</button> ` +
+      `<button class="pg-btn" id="mpNext"${d.page >= totalPages ? ' disabled' : ''}>下一页</button></span>`;
+    const prev = document.getElementById('mpPrev'), next = document.getElementById('mpNext');
+    if (prev) prev.onclick = () => { if (_mpPage > 1) showMyPicks(_mpPage - 1); };
+    if (next) next.onclick = () => { if (_mpPage < totalPages) showMyPicks(_mpPage + 1); };
+  } catch (e) {
+    body.innerHTML = '<div class="loading">加载失败，请确认后端接口已部署可访问</div>';
+  }
+}
+function closeMyPicks() { document.getElementById('myPicksModal').classList.remove('show'); }
+document.getElementById('openMyPicks').addEventListener('click', () => showMyPicks(1));
+document.getElementById('mpStatus').addEventListener('change', () => showMyPicks(1));
+document.getElementById('mpIssue').addEventListener('input', () => {
+  clearTimeout(_mpTimer); _mpTimer = setTimeout(() => showMyPicks(1), 300);
+});
 
 document.getElementById('genBtn').addEventListener('click', generatePick);
 

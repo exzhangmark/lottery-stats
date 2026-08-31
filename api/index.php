@@ -222,7 +222,7 @@ if ($action === 'rules') {
     exit;
 }
 
-// ---------- 中奖历史：最近 100 条选号存档（含当期开奖号码 + 累计中奖金额）----------
+// ---------- 中奖历史：最近 100 条选号存档（含当期开奖号码 + 按奖级汇总）----------
 if ($action === 'history') {
     $limit = 100;
     $stmt = $pdo->prepare(
@@ -235,13 +235,75 @@ if ($action === 'history') {
     );
     $stmt->execute([$limit]);
     $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
-    $totalAmount = 0;
-    foreach ($rows as $r) { $totalAmount += (int)$r['prize_amount']; }
+    // 按奖级汇总：一/二等奖金额浮动（记 0），只统计注数；三等奖起显示「注数/共X元」
+    $stat = [];
+    foreach ($rows as $r) {
+        $lv = (int)$r['prize_level'];
+        if ($lv < 1) continue;
+        if (!isset($stat[$lv])) $stat[$lv] = ['level' => $lv, 'count' => 0, 'amount' => 0];
+        $stat[$lv]['count']++;
+        $stat[$lv]['amount'] += (int)$r['prize_amount'];
+    }
+    $stat = array_values($stat);
+    usort($stat, fn($a, $b) => $a['level'] <=> $b['level']);
     echo json_encode([
-        'code'         => 1,
-        'data'         => $rows,
-        'total_amount' => $totalAmount,
-        'count'        => count($rows),
+        'code'  => 1,
+        'data'  => $rows,
+        'stat'  => $stat,
+        'count' => count($rows),
+    ]);
+    exit;
+}
+
+// ---------- 我的选号记录：按期号 / 中奖状态筛选 + 分页 + 全量奖级汇总 ----------
+if ($action === 'my_picks') {
+    $issue  = trim($_GET['issue'] ?? '');
+    $status = trim($_GET['status'] ?? 'all');   // all | won | unwon | pending
+    $page     = max(1, (int)($_GET['page'] ?? 1));
+    $pageSize = max(1, min(200, (int)($_GET['pageSize'] ?? 50)));
+    $where = [];
+    $params = [];
+    if ($issue !== '') { $where[] = 'p.issue LIKE ?'; $params[] = '%' . $issue . '%'; }
+    if ($status === 'won')         $where[] = "p.prize_level > 0";
+    elseif ($status === 'unwon')   $where[] = "p.status='checked' AND p.prize_level = 0";
+    elseif ($status === 'pending') $where[] = "p.status='pending'";
+    $whereSql = $where ? ('WHERE ' . implode(' AND ', $where)) : '';
+
+    $stmt = $pdo->prepare("SELECT COUNT(*) FROM picks p $whereSql");
+    $stmt->execute($params);
+    $total = (int)$stmt->fetchColumn();
+
+    $stmt = $pdo->prepare(
+        "SELECT p.type, p.issue, p.red, p.blue, p.scheme, p.prize_level, p.prize_amount, p.status, p.created_at,
+                r.red AS res_red, r.blue AS res_blue
+         FROM picks p
+         LEFT JOIN results r ON r.type=p.type AND r.issue=p.issue
+         $whereSql
+         ORDER BY p.created_at DESC, p.id DESC
+         LIMIT ? OFFSET ?"
+    );
+    $stmt->execute(array_merge($params, [(int)$pageSize, (int)(($page - 1) * $pageSize)]));
+    $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+    // 按奖级汇总（全量筛选结果，不分页），用于顶部统计
+    $agg = [];
+    $sqlAgg = "SELECT p.prize_level AS lv, COUNT(*) c, COALESCE(SUM(p.prize_amount),0) a FROM picks p $whereSql GROUP BY p.prize_level";
+    $stmtAgg = $pdo->prepare($sqlAgg);
+    $stmtAgg->execute($params);
+    foreach ($stmtAgg->fetchAll(PDO::FETCH_ASSOC) as $row) {
+        $lv = (int)$row['lv'];
+        if ($lv < 1) continue;
+        $agg[] = ['level' => $lv, 'count' => (int)$row['c'], 'amount' => (int)$row['a']];
+    }
+    usort($agg, fn($a, $b) => $a['level'] <=> $b['level']);
+
+    echo json_encode([
+        'code'     => 1,
+        'data'     => $rows,
+        'stat'     => $agg,
+        'total'    => $total,
+        'page'     => $page,
+        'pageSize' => $pageSize,
     ]);
     exit;
 }
