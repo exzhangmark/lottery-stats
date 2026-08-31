@@ -339,13 +339,14 @@
     <h3>中奖历史（最近 100 条）</h3>
     <div class="pick-filter">
       <span class="pf-label">彩种</span>
-      <select id="hsType">
-        <option value="">全部</option>
-        <option value="ssq">福利双色球</option>
-        <option value="dlt">体彩大乐透</option>
-      </select>
+      <div class="pf-chips" id="hsTypeChips">
+        <button class="pf-chip active" data-ptype="">全部</button>
+        <button class="pf-chip" data-ptype="ssq">福利双色球</button>
+        <button class="pf-chip" data-ptype="dlt">体彩大乐透</button>
+      </div>
     </div>
     <div class="pick-filter">
+      <span class="pf-label">状态</span>
       <div class="pf-chips" id="hsChips">
         <button class="pf-chip active" data-status="all">全部</button>
         <button class="pf-chip" data-status="won">已中奖</button>
@@ -365,14 +366,17 @@
     <div class="pick-filter">
       <span class="pf-label">期号</span>
       <input type="text" id="mpIssue" placeholder="如 2026 或 001" autocomplete="off">
-      <span class="pf-label">彩种</span>
-      <select id="mpType">
-        <option value="">全部</option>
-        <option value="ssq">福利双色球</option>
-        <option value="dlt">体彩大乐透</option>
-      </select>
     </div>
     <div class="pick-filter">
+      <span class="pf-label">彩种</span>
+      <div class="pf-chips" id="mpTypeChips">
+        <button class="pf-chip active" data-ptype="">全部</button>
+        <button class="pf-chip" data-ptype="ssq">福利双色球</button>
+        <button class="pf-chip" data-ptype="dlt">体彩大乐透</button>
+      </div>
+    </div>
+    <div class="pick-filter">
+      <span class="pf-label">状态</span>
       <div class="pf-chips" id="mpChips">
         <button class="pf-chip active" data-status="all">全部</button>
         <button class="pf-chip" data-status="won">已中奖</button>
@@ -870,22 +874,16 @@ async function generatePick() {
     } catch (e) {
       copyOk = false;
     }
-    // 存档：异步保存本次选号（按自动推算的下一期），不影响复制体验；结果在 toast 中可见，便于排查落库问题
-    let savedMsg = '';
-    try {
-      const r = await fetch(apiBase, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-        body: `action=savePick&type=${encodeURIComponent(type)}&red=${encodeURIComponent(redNums.join(','))}&blue=${encodeURIComponent(blueNums.join(','))}&scheme=${encodeURIComponent(schemeId)}`
-      }).then(x => x.json());
-      if (r.code === 1 && r.issue) savedMsg = ` · 已存第${r.issue}期`;
-      else if (r.code === 1)        savedMsg = ' · 已存';
-      else if (r.code === 0)        savedMsg = ` · 未存：${r.msg || '重复'}`;
-      else                          savedMsg = ` · 存档失败：${r.msg || '未知错误'}`;
-    } catch (e) {
-      savedMsg = ' · 存档失败(网络异常)';
-    }
-    showToast((copyOk ? '已复制：' : '复制失败，') + copyText + savedMsg);
+    showToast((copyOk ? '已复制：' : '复制失败，') + copyText);
+    // 存档：后台异步保存本次选号（按自动推算的下一期）。成功静默，仅失败时提示以便排查
+    fetch(apiBase, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: `action=savePick&type=${encodeURIComponent(type)}&red=${encodeURIComponent(redNums.join(','))}&blue=${encodeURIComponent(blueNums.join(','))}&scheme=${encodeURIComponent(schemeId)}`
+    }).then(x => x.json()).then(r => {
+      if (r && (r.code === 1 || r.code === 0)) return;   // 已存 / 重复未存：均视为正常，不打扰
+      showToast('存档失败：' + ((r && r.msg) || '未知错误'));
+    }).catch(() => showToast('存档失败(网络异常)'));
   } finally {
     btn.disabled = false; btn.textContent = '生成';
   }
@@ -1005,16 +1003,17 @@ function statFromRows(rows) {
   });
   return Object.values(m).sort((a, b) => a.level - b.level);
 }
-// 绑定一组胶囊筛选按钮：点击切换 active 并回调新状态
-function bindChips(containerId, onPick) {
+// 绑定一组胶囊筛选按钮：点击切换 active 并回调新值（dataKey 默认读 data-status）
+function bindChips(containerId, onPick, dataKey) {
   const box = document.getElementById(containerId);
   if (!box) return;
+  const key = dataKey || 'status';
   box.addEventListener('click', e => {
     const btn = e.target.closest('.pf-chip');
     if (!btn) return;
     box.querySelectorAll('.pf-chip').forEach(b => b.classList.remove('active'));
     btn.classList.add('active');
-    onPick(btn.dataset.status || 'all');
+    onPick(btn.dataset[key] ?? '');
   });
 }
 // 中奖历史：最近 100 条（拉一次后本地按彩种 + 中奖状态筛选）
@@ -1038,7 +1037,7 @@ function renderHistory() {
   if (!body) return;
   if (!_hsRows.length) {
     body.innerHTML = '<div class="history-stat">最近 <b>0</b> 条选号记录 · 暂未中奖</div>' +
-                     '<div class="loading">暂无选号记录。请先在首页点「生成」，生成后留意提示是否出现「· 已存第XXXX期」；若显示「存档失败」说明落库异常，需检查服务器。</div>';
+                     '<div class="loading">暂无选号记录，先去首页点「生成」吧～</div>';
     return;
   }
   const rows = _hsRows.filter(r => matchPickStatus(r, _hsStatus) && (!_hsType || r.type === _hsType));
@@ -1049,18 +1048,15 @@ function renderHistory() {
 }
 function closeHistory() { document.getElementById('historyModal').classList.remove('show'); }
 document.getElementById('openHistory').addEventListener('click', showHistory);
-bindChips('hsChips', s => { _hsStatus = s; renderHistory(); });
-document.getElementById('hsType').addEventListener('change', () => {
-  _hsType = document.getElementById('hsType').value;
-  renderHistory();
-});
+bindChips('hsChips', s => { _hsStatus = s || 'all'; renderHistory(); });
+bindChips('hsTypeChips', t => { _hsType = t; renderHistory(); }, 'ptype');
 
 // 我的选号记录：按期号 / 彩种 / 中奖状态筛选 + 分页 + 导出
-let _mpPage = 1, _mpTimer = null, _mpStatus = 'all';
+let _mpPage = 1, _mpTimer = null, _mpStatus = 'all', _mpType = '';
 async function showMyPicks(page) {
   _mpPage = page || 1;
   const issue  = document.getElementById('mpIssue').value.trim();
-  const ptype  = document.getElementById('mpType').value;
+  const ptype  = _mpType;
   const modal  = document.getElementById('myPicksModal');
   const body   = modal.querySelector('.history-body');
   const pager  = document.getElementById('mpPager');
@@ -1089,8 +1085,8 @@ async function showMyPicks(page) {
 }
 function closeMyPicks() { document.getElementById('myPicksModal').classList.remove('show'); }
 document.getElementById('openMyPicks').addEventListener('click', () => showMyPicks(1));
-document.getElementById('mpType').addEventListener('change', () => showMyPicks(1));
-bindChips('mpChips', s => { _mpStatus = s; showMyPicks(1); });
+bindChips('mpChips', s => { _mpStatus = s || 'all'; showMyPicks(1); });
+bindChips('mpTypeChips', t => { _mpType = t; showMyPicks(1); }, 'ptype');
 document.getElementById('mpIssue').addEventListener('input', () => {
   clearTimeout(_mpTimer); _mpTimer = setTimeout(() => showMyPicks(1), 300);
 });
