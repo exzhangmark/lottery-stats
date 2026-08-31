@@ -253,8 +253,25 @@
   .pick-pager .pg-btn { padding:5px 12px; border:1px solid #d0d7de; background:#fff; border-radius:6px; cursor:pointer; font-size:13px; color:#333; }
   .pick-pager .pg-btn:hover:not(:disabled) { border-color:#e74c3c; color:#e74c3c; }
   .pick-pager .pg-btn:disabled { opacity:.45; cursor:not-allowed; }
+  /* 中奖/未中奖快捷筛选胶囊 + 导出按钮 */
+  .pf-chips { display:flex; gap:6px; flex-wrap:wrap; }
+  .pf-chip {
+    padding:5px 12px; border:1px solid #d0d7de; background:#fff; border-radius:16px;
+    cursor:pointer; font-size:13px; color:#555;
+  }
+  .pf-chip:hover { border-color:#e74c3c; color:#e74c3c; }
+  .pf-chip.active { background:#e74c3c; border-color:#e74c3c; color:#fff; }
+  .pf-export {
+    margin-left:auto; padding:6px 12px; border:1px solid #2471a3; background:#fff;
+    color:#2471a3; border-radius:6px; cursor:pointer; font-size:13px; white-space:nowrap;
+  }
+  .pf-export:hover { background:#2471a3; color:#fff; }
   /* 手机端：顶栏换行、彩种选择单独一行铺满，避免过长 */
   @media (max-width: 640px) {
+    .pf-chips { width:100%; }
+    .pf-chip { flex:1 1 auto; text-align:center; padding:6px 8px; }
+    .pf-export { margin-left:0; width:100%; text-align:center; padding:8px 12px; }
+    .pick-filter input { flex:1 1 100%; }
     header { flex-wrap:wrap; padding:10px 14px; gap:8px; }
     header h1 { font-size:15px; flex:1 1 100%; margin:0; }
     .head-actions { margin-left:0; width:100%; flex-wrap:wrap; gap:6px; }
@@ -325,6 +342,15 @@
   <div class="history-card">
     <button class="rules-close" onclick="closeHistory()">&times;</button>
     <h3>我的中奖历史（最近 100 条）</h3>
+    <div class="pick-filter">
+      <div class="pf-chips" id="hsChips">
+        <button class="pf-chip active" data-status="all">全部</button>
+        <button class="pf-chip" data-status="won">已中奖</button>
+        <button class="pf-chip" data-status="unwon">未中奖</button>
+        <button class="pf-chip" data-status="pending">待开奖</button>
+      </div>
+      <button class="pf-export" id="hsExport">导出 CSV</button>
+    </div>
     <div class="history-body"></div>
   </div>
 </div>
@@ -337,13 +363,21 @@
     <div class="pick-filter">
       <span class="pf-label">期号</span>
       <input type="text" id="mpIssue" placeholder="如 2026 或 001" autocomplete="off">
-      <span class="pf-label">状态</span>
-      <select id="mpStatus">
-        <option value="all">全部</option>
-        <option value="won">已中奖</option>
-        <option value="unwon">未中奖</option>
-        <option value="pending">待开奖</option>
+      <span class="pf-label">彩种</span>
+      <select id="mpType">
+        <option value="">全部</option>
+        <option value="ssq">福利双色球</option>
+        <option value="dlt">体彩大乐透</option>
       </select>
+    </div>
+    <div class="pick-filter">
+      <div class="pf-chips" id="mpChips">
+        <button class="pf-chip active" data-status="all">全部</button>
+        <button class="pf-chip" data-status="won">已中奖</button>
+        <button class="pf-chip" data-status="unwon">未中奖</button>
+        <button class="pf-chip" data-status="pending">待开奖</button>
+      </div>
+      <button class="pf-export" id="mpExport">导出 CSV</button>
     </div>
     <div class="history-body"></div>
     <div class="pick-pager" id="mpPager"></div>
@@ -946,7 +980,54 @@ function renderPickStat(statArr) {
   });
   return parts.length ? parts.join('、') : '暂未中奖';
 }
-// 中奖历史：最近 100 条
+// 中奖状态判定（与后端 my_picks 的 won/unwon/pending 口径保持一致）
+function matchPickStatus(r, status) {
+  if (status === 'won')     return Number(r.prize_level) > 0;
+  if (status === 'unwon')   return r.status === 'checked' && !(Number(r.prize_level) > 0);
+  if (status === 'pending') return r.status === 'pending';
+  return true;
+}
+// 前端本地按奖级聚合（中奖历史弹窗切换筛选时即时重算，不再请求后端）
+function statFromRows(rows) {
+  const m = {};
+  (rows || []).forEach(r => {
+    const lv = Number(r.prize_level) || 0;
+    if (lv < 1) return;
+    if (!m[lv]) m[lv] = { level: lv, count: 0, amount: 0 };
+    m[lv].count++;
+    m[lv].amount += Number(r.prize_amount) || 0;
+  });
+  return Object.values(m).sort((a, b) => a.level - b.level);
+}
+// 绑定一组胶囊筛选按钮：点击切换 active 并回调新状态
+function bindChips(containerId, onPick) {
+  const box = document.getElementById(containerId);
+  if (!box) return;
+  box.addEventListener('click', e => {
+    const btn = e.target.closest('.pf-chip');
+    if (!btn) return;
+    box.querySelectorAll('.pf-chip').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    onPick(btn.dataset.status || 'all');
+  });
+}
+// 导出 CSV：走后端 export_picks，按当前筛选条件导出（不受分页限制）
+function exportPicks(opt) {
+  const q = new URLSearchParams({ action: 'export_picks', status: opt.status || 'all' });
+  if (opt.issue) q.set('issue', opt.issue);
+  if (opt.ptype) q.set('ptype', opt.ptype);
+  if (opt.limit) q.set('limit', String(opt.limit));
+  const a = document.createElement('a');
+  a.href = `${apiBase}?${q.toString()}`;
+  a.style.display = 'none';
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  showToast('已开始导出 CSV，请查看浏览器下载');
+}
+
+// 中奖历史：最近 100 条（拉一次后本地按中奖状态筛选）
+let _hsRows = [], _hsStatus = 'all';
 async function showHistory() {
   const modal = document.getElementById('historyModal');
   const body  = modal.querySelector('.history-body');
@@ -955,30 +1036,47 @@ async function showHistory() {
   try {
     const d = await fetch(`${apiBase}?action=history`).then(x => x.json());
     if (d.code !== 1) { body.innerHTML = '<div class="loading">加载失败</div>'; return; }
-    const rows = d.data || [];
-    const stat = `<div class="history-stat">最近 <b>${d.count}</b> 条选号记录 · ${renderPickStat(d.stat)}</div>`;
-    if (!rows.length) { body.innerHTML = stat + '<div class="loading">暂无选号记录，先去生成一注吧～</div>'; return; }
-    body.innerHTML = stat + `<div class="history-list">${rows.map(renderPickItem).join('')}</div>`;
+    _hsRows = d.data || [];
+    renderHistory();
   } catch (e) {
     body.innerHTML = '<div class="loading">加载失败，请确认后端接口已部署可访问</div>';
   }
 }
+function renderHistory() {
+  const body = document.querySelector('#historyModal .history-body');
+  if (!body) return;
+  if (!_hsRows.length) {
+    body.innerHTML = '<div class="history-stat">最近 <b>0</b> 条选号记录 · 暂未中奖</div>' +
+                     '<div class="loading">暂无选号记录，先去生成一注吧～</div>';
+    return;
+  }
+  const rows = _hsRows.filter(r => matchPickStatus(r, _hsStatus));
+  const extra = _hsStatus === 'all' ? '' : ` <span style="color:#888">（当前筛选 ${rows.length} 条）</span>`;
+  const stat = `<div class="history-stat">最近 <b>${_hsRows.length}</b> 条选号记录 · ${renderPickStat(statFromRows(rows))}${extra}</div>`;
+  if (!rows.length) { body.innerHTML = stat + '<div class="loading">没有符合该状态的记录</div>'; return; }
+  body.innerHTML = stat + `<div class="history-list">${rows.map(renderPickItem).join('')}</div>`;
+}
 function closeHistory() { document.getElementById('historyModal').classList.remove('show'); }
 document.getElementById('openHistory').addEventListener('click', showHistory);
+bindChips('hsChips', s => { _hsStatus = s; renderHistory(); });
+document.getElementById('hsExport').addEventListener('click', () => {
+  exportPicks({ status: _hsStatus, limit: 100 });
+});
 
-// 我的选号记录：按期号 / 中奖状态筛选 + 分页
-let _mpPage = 1, _mpTimer = null;
+// 我的选号记录：按期号 / 彩种 / 中奖状态筛选 + 分页 + 导出
+let _mpPage = 1, _mpTimer = null, _mpStatus = 'all';
 async function showMyPicks(page) {
   _mpPage = page || 1;
   const issue  = document.getElementById('mpIssue').value.trim();
-  const status = document.getElementById('mpStatus').value;
+  const ptype  = document.getElementById('mpType').value;
   const modal  = document.getElementById('myPicksModal');
   const body   = modal.querySelector('.history-body');
   const pager  = document.getElementById('mpPager');
   body.innerHTML = '<div class="loading">加载中...</div>';
   modal.classList.add('show');
   try {
-    const url = `${apiBase}?action=my_picks&issue=${encodeURIComponent(issue)}&status=${encodeURIComponent(status)}&page=${_mpPage}&pageSize=50`;
+    const url = `${apiBase}?action=my_picks&issue=${encodeURIComponent(issue)}&ptype=${encodeURIComponent(ptype)}`
+              + `&status=${encodeURIComponent(_mpStatus)}&page=${_mpPage}&pageSize=50`;
     const d = await fetch(url).then(x => x.json());
     if (d.code !== 1) { body.innerHTML = '<div class="loading">加载失败</div>'; return; }
     const rows = d.data || [];
@@ -999,7 +1097,15 @@ async function showMyPicks(page) {
 }
 function closeMyPicks() { document.getElementById('myPicksModal').classList.remove('show'); }
 document.getElementById('openMyPicks').addEventListener('click', () => showMyPicks(1));
-document.getElementById('mpStatus').addEventListener('change', () => showMyPicks(1));
+document.getElementById('mpType').addEventListener('change', () => showMyPicks(1));
+bindChips('mpChips', s => { _mpStatus = s; showMyPicks(1); });
+document.getElementById('mpExport').addEventListener('click', () => {
+  exportPicks({
+    status: _mpStatus,
+    issue: document.getElementById('mpIssue').value.trim(),
+    ptype: document.getElementById('mpType').value,
+  });
+});
 document.getElementById('mpIssue').addEventListener('input', () => {
   clearTimeout(_mpTimer); _mpTimer = setTimeout(() => showMyPicks(1), 300);
 });

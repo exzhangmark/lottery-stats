@@ -259,11 +259,13 @@ if ($action === 'history') {
 if ($action === 'my_picks') {
     $issue  = trim($_GET['issue'] ?? '');
     $status = trim($_GET['status'] ?? 'all');   // all | won | unwon | pending
+    $ptype  = trim($_GET['ptype'] ?? '');       // ssq | dlt | 空=全部彩种
     $page     = max(1, (int)($_GET['page'] ?? 1));
     $pageSize = max(1, min(200, (int)($_GET['pageSize'] ?? 50)));
     $where = [];
     $params = [];
     if ($issue !== '') { $where[] = 'p.issue LIKE ?'; $params[] = '%' . $issue . '%'; }
+    if (in_array($ptype, ['ssq', 'dlt'], true)) { $where[] = 'p.type = ?'; $params[] = $ptype; }
     if ($status === 'won')         $where[] = "p.prize_level > 0";
     elseif ($status === 'unwon')   $where[] = "p.status='checked' AND p.prize_level = 0";
     elseif ($status === 'pending') $where[] = "p.status='pending'";
@@ -305,6 +307,81 @@ if ($action === 'my_picks') {
         'page'     => $page,
         'pageSize' => $pageSize,
     ]);
+    exit;
+}
+
+// ---------- 导出选号记录为 CSV（支持期号/中奖状态/彩种筛选，最多 5000 条）----------
+if ($action === 'export_picks') {
+    $issue  = trim($_GET['issue'] ?? '');
+    $status = trim($_GET['status'] ?? 'all');   // all | won | unwon | pending
+    $ptype  = trim($_GET['ptype'] ?? '');       // ssq | dlt | 空=全部彩种
+    $limit  = max(1, min(5000, (int)($_GET['limit'] ?? 5000)));
+
+    $where = [];
+    $params = [];
+    if ($issue !== '') { $where[] = 'p.issue LIKE ?'; $params[] = '%' . $issue . '%'; }
+    if (in_array($ptype, ['ssq', 'dlt'], true)) { $where[] = 'p.type = ?'; $params[] = $ptype; }
+    if ($status === 'won')         $where[] = "p.prize_level > 0";
+    elseif ($status === 'unwon')   $where[] = "p.status='checked' AND p.prize_level = 0";
+    elseif ($status === 'pending') $where[] = "p.status='pending'";
+    $whereSql = $where ? ('WHERE ' . implode(' AND ', $where)) : '';
+
+    $stmt = $pdo->prepare(
+        "SELECT p.type, p.issue, p.red, p.blue, p.scheme, p.prize_level, p.prize_amount, p.status, p.created_at,
+                r.red AS res_red, r.blue AS res_blue
+         FROM picks p
+         LEFT JOIN results r ON r.type=p.type AND r.issue=p.issue
+         $whereSql
+         ORDER BY p.created_at DESC, p.id DESC
+         LIMIT ?"
+    );
+    $stmt->execute(array_merge($params, [$limit]));
+    $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+    $typeLabels = ['ssq' => '双色球', 'dlt' => '大乐透'];
+    $schemeLabels = [
+        'cold' => '冷门预选', 'hot' => '热门预选', 'mixed' => '冷热结合', 'omit' => '遗漏值优先',
+        'balance' => '随机均衡', 'avg' => '均值回归', 'repeat' => '历史复刻', 'lucky' => '吉利玄学',
+        'flat' => '躺平机选',
+    ];
+    $statusLabels = ['all' => '全部', 'won' => '已中奖', 'unwon' => '未中奖', 'pending' => '待开奖'];
+
+    // 覆盖前面声明的 JSON 头，改为 CSV 附件下载
+    $stamp     = date('Ymd_His');
+    $asciiName = 'my_picks_' . (in_array($status, ['won', 'unwon', 'pending'], true) ? $status : 'all') . '_' . $stamp . '.csv';
+    $cnName    = '我的选号记录_' . ($statusLabels[$status] ?? '全部') . '_' . $stamp . '.csv';
+    header('Content-Type: text/csv; charset=utf-8');
+    header('Content-Disposition: attachment; filename="' . $asciiName . '"; filename*=UTF-8\'\'' . rawurlencode($cnName));
+    header('Cache-Control: no-store, no-cache, must-revalidate');
+
+    $out = fopen('php://output', 'w');
+    fwrite($out, "\xEF\xBB\xBF");   // UTF-8 BOM：让 Excel 正确识别中文
+    fputcsv($out, ['彩种', '期号', '选号方案', '我的红球/前区', '我的蓝球/后区', '开奖红球/前区', '开奖蓝球/后区', '状态', '中奖等级', '中奖金额(元)', '生成时间']);
+    foreach ($rows as $r) {
+        $lv    = (int)$r['prize_level'];
+        $maxLv = $r['type'] === 'ssq' ? 6 : 9;
+        if ($r['status'] === 'pending') { $stTxt = '待开奖'; $lvTxt = ''; }
+        elseif ($lv > 0)                { $stTxt = '已中奖'; $lvTxt = ($lv <= $maxLv ? '第' . $lv . '奖' : '中奖'); }
+        else                            { $stTxt = '未中奖'; $lvTxt = ''; }
+        // 一/二等奖为浮动奖，金额依赖当期奖池与注数，库中记 0
+        $amtTxt = ((int)$r['prize_amount'] > 0)
+            ? (string)(int)$r['prize_amount']
+            : ($lv >= 1 && $lv <= 2 ? '浮动奖（视奖池/注数）' : '0');
+        fputcsv($out, [
+            $typeLabels[$r['type']] ?? $r['type'],
+            $r['issue'],
+            $schemeLabels[$r['scheme']] ?? ($r['scheme'] ?: '—'),
+            str_replace(',', '、', (string)$r['red']),
+            str_replace(',', '、', (string)$r['blue']),
+            $r['res_red']  !== null ? str_replace(',', '、', (string)$r['res_red'])  : '',
+            $r['res_blue'] !== null ? str_replace(',', '、', (string)$r['res_blue']) : '',
+            $stTxt,
+            $lvTxt,
+            $amtTxt,
+            $r['created_at'],
+        ]);
+    }
+    fclose($out);
     exit;
 }
 
