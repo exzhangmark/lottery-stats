@@ -89,6 +89,14 @@
   .gen-sub { font-size:12px; color:#999; font-weight:normal; }
   .gen-row-label { font-size:13px; color:#666; margin:8px 0 6px; }
   .gen-note { font-size:12px; color:#e67e22; margin-top:10px; }
+  /* 复制成功 toast */
+  .toast {
+    position:fixed; left:50%; top:24px; transform:translateX(-50%);
+    background:rgba(44,62,80,.92); color:#fff; padding:10px 18px; border-radius:24px;
+    font-size:14px; z-index:9999; opacity:0; pointer-events:none;
+    transition:opacity .25s ease, top .25s ease; max-width:90vw; box-sizing:border-box;
+  }
+  .toast.show { opacity:1; top:32px; }
   /* 开奖列表分页条 */
   .pager {
     display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:10px;
@@ -688,10 +696,58 @@ async function generatePick() {
     box.classList.add('show');
     renderGenBalls('gen-red', reds, 'red', redMaxV, isOmit);
     renderGenBalls('gen-blue', blues, 'blue', blueMaxV, isOmit);
+
+    // 生成后自动复制号码到剪贴板，并 toast 提示
+    try {
+      const redNums  = reds.map(p => p.num);
+      const blueNums = blues.map(p => p.num);
+      const typeName = type === 'ssq' ? '双色球' : '大乐透';
+      const copyText = typeName + '：' + redNums.join('/') + '+' + blueNums.join('/');
+      await copyTextToClipboard(copyText);
+      showToast('已复制：' + copyText);
+    } catch (e) {
+      showToast('复制失败，请手动选择号码');
+    }
   } finally {
     btn.disabled = false; btn.textContent = '生成';
   }
 }
+// 复制文本到剪贴板（兼容非安全上下文 / 旧浏览器）
+async function copyTextToClipboard(text) {
+  if (navigator.clipboard && window.isSecureContext) {
+    try { await navigator.clipboard.writeText(text); return true; } catch (e) { /* 降级到 execCommand */ }
+  }
+  const ta = document.createElement('textarea');
+  ta.value = text;
+  ta.style.position = 'fixed';
+  ta.style.top = '-9999px';
+  ta.style.opacity = '0';
+  document.body.appendChild(ta);
+  ta.focus(); ta.select();
+  let ok = false;
+  try { ok = document.execCommand('copy'); } catch (e) { ok = false; }
+  document.body.removeChild(ta);
+  if (!ok) throw new Error('copy failed');
+  return true;
+}
+
+// 轻量 toast：出现后 3 秒自动消失
+let _toastTimer = null;
+function showToast(msg) {
+  let el = document.getElementById('toast');
+  if (!el) {
+    el = document.createElement('div');
+    el.id = 'toast';
+    el.className = 'toast';
+    document.body.appendChild(el);
+  }
+  el.textContent = msg;
+  void el.offsetWidth;            // 强制重绘，确保过渡动画重新触发
+  el.classList.add('show');
+  if (_toastTimer) clearTimeout(_toastTimer);
+  _toastTimer = setTimeout(() => el.classList.remove('show'), 3000);
+}
+
 document.getElementById('genBtn').addEventListener('click', generatePick);
 
 // ---------- 意见反馈 ----------
