@@ -705,6 +705,13 @@ function savePick($type, $redArr, $blueArr, $scheme)
     $red  = implode(',', $redArr);
     $blue = implode(',', $blueArr);
     $issue = getNextIssue($type);
+    if (!$issue) {
+        // 兜底：用今天推算的下一开奖日，保证选号仍能存档（而不因期号缺失丢数据）
+        try {
+            $next = nextDrawDate($type, date('Y-m-d'));
+            if ($next) $issue = issueForDate($type, $next);
+        } catch (\Throwable $e) { /* 忽略，走下面的失败返回 */ }
+    }
     if (!$issue) return ['ok' => false, 'msg' => '无法确定目标期号（缺少历史开奖数据）'];
     $pdo = db();
     // 幂等：同 (type,issue,red,blue,scheme) 不重复插入

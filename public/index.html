@@ -870,7 +870,7 @@ async function generatePick() {
     } catch (e) {
       copyOk = false;
     }
-    // 存档：异步保存本次选号（按自动推算的下一期），不影响复制体验
+    // 存档：异步保存本次选号（按自动推算的下一期），不影响复制体验；结果在 toast 中可见，便于排查落库问题
     let savedMsg = '';
     try {
       const r = await fetch(apiBase, {
@@ -879,7 +879,12 @@ async function generatePick() {
         body: `action=savePick&type=${encodeURIComponent(type)}&red=${encodeURIComponent(redNums.join(','))}&blue=${encodeURIComponent(blueNums.join(','))}&scheme=${encodeURIComponent(schemeId)}`
       }).then(x => x.json());
       if (r.code === 1 && r.issue) savedMsg = ` · 已存第${r.issue}期`;
-    } catch (e) { /* 存档失败静默处理 */ }
+      else if (r.code === 1)        savedMsg = ' · 已存';
+      else if (r.code === 0)        savedMsg = ` · 未存：${r.msg || '重复'}`;
+      else                          savedMsg = ` · 存档失败：${r.msg || '未知错误'}`;
+    } catch (e) {
+      savedMsg = ' · 存档失败(网络异常)';
+    }
     showToast((copyOk ? '已复制：' : '复制失败，') + copyText + savedMsg);
   } finally {
     btn.disabled = false; btn.textContent = '生成';
@@ -1033,7 +1038,7 @@ function renderHistory() {
   if (!body) return;
   if (!_hsRows.length) {
     body.innerHTML = '<div class="history-stat">最近 <b>0</b> 条选号记录 · 暂未中奖</div>' +
-                     '<div class="loading">暂无选号记录，先去生成一注吧～</div>';
+                     '<div class="loading">暂无选号记录。请先在首页点「生成」，生成后留意提示是否出现「· 已存第XXXX期」；若显示「存档失败」说明落库异常，需检查服务器。</div>';
     return;
   }
   const rows = _hsRows.filter(r => matchPickStatus(r, _hsStatus) && (!_hsType || r.type === _hsType));
