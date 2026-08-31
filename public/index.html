@@ -22,7 +22,10 @@
     font-size:13px; padding:5px 14px;
   }
   #openFb:hover { background:rgba(255,255,255,.1); color:#fff; }
-  .tabs { display:flex; gap:10px; margin-left:auto; }
+  .head-actions { display:flex; gap:8px; margin-left:auto; }
+  .head-actions .fb-btn { margin-left:0; }
+  /* 彩种选择单独成一行，避免顶栏在手机端过长 */
+  .type-bar { display:flex; gap:10px; justify-content:center; background:#2c3e50; padding:10px 20px; }
   .tab { padding:8px 18px; border-radius:6px; cursor:pointer; background:#34495e; color:#fff; border:none; font-size:14px; }
   .tab.active { background:#e74c3c; }
   .panel { display:none; padding:20px; }
@@ -89,14 +92,15 @@
   .gen-sub { font-size:12px; color:#999; font-weight:normal; }
   .gen-row-label { font-size:13px; color:#666; margin:8px 0 6px; }
   .gen-note { font-size:12px; color:#e67e22; margin-top:10px; }
-  /* 复制成功 toast */
+  /* 复制成功 toast：屏幕正中央弹出，更显眼；3 秒后淡出 */
   .toast {
-    position:fixed; left:50%; top:24px; transform:translateX(-50%);
-    background:rgba(44,62,80,.92); color:#fff; padding:10px 18px; border-radius:24px;
-    font-size:14px; z-index:9999; opacity:0; pointer-events:none;
-    transition:opacity .25s ease, top .25s ease; max-width:90vw; box-sizing:border-box;
+    position:fixed; left:50%; top:50%; transform:translate(-50%,-50%);
+    background:rgba(44,62,80,.95); color:#fff; padding:14px 22px; border-radius:12px;
+    font-size:15px; z-index:9999; opacity:0; pointer-events:none; text-align:center;
+    transition:opacity .2s ease; max-width:90vw; box-sizing:border-box;
+    box-shadow:0 8px 32px rgba(0,0,0,.35);
   }
-  .toast.show { opacity:1; top:32px; }
+  .toast.show { opacity:1; }
   /* 中奖规则按钮（方案名右侧） */
   .rule-btn {
     margin-left:10px; padding:2px 12px; font-size:12px; line-height:20px;
@@ -206,18 +210,62 @@
   .sub-switch input { width:auto; margin:0; }
   .sub-foot { font-size:12px; color:#999; margin-top:12px; text-align:center; }
   .sub-foot a { color:#e74c3c; cursor:pointer; }
+  /* 中奖历史弹窗 */
+  .history-mask {
+    position:fixed; inset:0; background:rgba(0,0,0,.45); display:none; z-index:9998;
+    align-items:center; justify-content:center;
+  }
+  .history-mask.show { display:flex; }
+  .history-card {
+    position:relative; background:#fff; border-radius:12px; width:600px; max-width:94vw;
+    max-height:86vh; display:flex; flex-direction:column; padding:18px 20px; box-sizing:border-box;
+    box-shadow:0 12px 48px rgba(0,0,0,.25);
+  }
+  .history-card h3 { margin:0 0 10px; font-size:16px; color:#2c3e50; }
+  .history-body { overflow:auto; flex:1 1 auto; -webkit-overflow-scrolling:touch; }
+  .history-stat {
+    background:#f6f8fa; border:1px solid #e1e4e8; border-radius:8px;
+    padding:10px 14px; font-size:14px; margin-bottom:10px;
+  }
+  .history-stat .amt { color:#e74c3c; font-size:18px; }
+  .history-list { display:flex; flex-direction:column; gap:8px; }
+  .history-item { border:1px solid #eee; border-radius:8px; padding:8px 10px; font-size:13px; }
+  .hi-top { display:flex; gap:8px; align-items:center; margin-bottom:4px; flex-wrap:wrap; }
+  .hi-type { font-weight:bold; color:#2c3e50; }
+  .hi-issue { color:#2471a3; }
+  .hi-scheme { color:#888; margin-left:auto; font-size:12px; }
+  .hi-nums { display:flex; gap:6px; align-items:baseline; margin:2px 0; flex-wrap:wrap; }
+  .hi-label { color:#999; font-size:12px; min-width:34px; }
+  .hi-bottom { display:flex; justify-content:space-between; align-items:center; margin-top:5px; }
+  .hi-bottom .amt { color:#e74c3c; font-weight:bold; font-size:14px; }
+  .lv-win { color:#e74c3c; font-weight:bold; }
+  .lv-none { color:#999; }
+  .lv-pending { color:#f39c12; }
+  /* 手机端：顶栏换行、彩种选择单独一行铺满，避免过长 */
+  @media (max-width: 640px) {
+    header { flex-wrap:wrap; padding:10px 14px; gap:8px; }
+    header h1 { font-size:15px; flex:1 1 100%; margin:0; }
+    .head-actions { margin-left:0; width:100%; flex-wrap:wrap; gap:6px; }
+    .head-actions .fb-btn { flex:1 1 auto; text-align:center; padding:7px 10px; }
+    .type-bar { padding:8px 12px; gap:8px; }
+    .tab { flex:1 1 auto; text-align:center; padding:9px 8px; font-size:14px; }
+    .history-card { width:94vw; }
+  }
 </style>
 </head>
 <body>
 <header>
   <h1>彩票开奖统计</h1>
-  <button class="fb-btn" id="openFb">意见</button>
-  <button class="fb-btn" id="openSub">推送通知</button>
-  <div class="tabs">
-    <button class="tab active" data-type="ssq">福利双色球</button>
-    <button class="tab" data-type="dlt">体彩大乐透</button>
+  <div class="head-actions">
+    <button class="fb-btn" id="openFb">意见</button>
+    <button class="fb-btn" id="openSub">推送通知</button>
+    <button class="fb-btn" id="openHistory">中奖历史</button>
   </div>
 </header>
+<div class="type-bar">
+  <button class="tab active" data-type="ssq">福利双色球</button>
+  <button class="tab" data-type="dlt">体彩大乐透</button>
+</div>
 
 <div class="range-bar">
   <span class="rb-label">时间范围：</span>
@@ -256,6 +304,15 @@
   <div class="rules-card">
     <button class="rules-close" onclick="closeRules()">&times;</button>
     <div class="rules-body"></div>
+  </div>
+</div>
+
+<!-- 中奖历史弹窗 -->
+<div class="history-mask" id="historyModal" onclick="if(event.target===this)closeHistory()">
+  <div class="history-card">
+    <button class="rules-close" onclick="closeHistory()">&times;</button>
+    <h3>我的中奖历史（最近 100 条）</h3>
+    <div class="history-body"></div>
   </div>
 </div>
 
@@ -816,6 +873,57 @@ async function showRules(type) {
   document.getElementById('rulesModal').classList.add('show');
 }
 function closeRules() { document.getElementById('rulesModal').classList.remove('show'); }
+
+// 中奖历史弹窗：拉取最近 100 条选号存档 + 累计中奖金额
+function prizeLabel(type, level) {
+  const max = type === 'ssq' ? 6 : 9;
+  return (level >= 1 && level <= max) ? `第${level}奖` : '中奖';
+}
+function fmtNums(type, red, blue) {
+  const reds  = red.split(',').map(n => `<span class="red-num">${n}</span>`).join('、');
+  const blues = blue.split(',').map(n => `<span class="blue-num">${n}</span>`).join('、');
+  return reds + ' <span style="color:#999">+</span> ' + blues;
+}
+async function showHistory() {
+  const modal = document.getElementById('historyModal');
+  const body  = modal.querySelector('.history-body');
+  body.innerHTML = '<div class="loading">加载中...</div>';
+  modal.classList.add('show');
+  try {
+    const d = await fetch(`${apiBase}?action=history`).then(x => x.json());
+    if (d.code !== 1) { body.innerHTML = '<div class="loading">加载失败</div>'; return; }
+    const rows = d.data || [];
+    const stat = `<div class="history-stat">最近 <b>${d.count}</b> 条选号记录 · 累计中奖金额 <b class="amt">¥${Number(d.total_amount || 0).toLocaleString()}</b></div>`;
+    if (!rows.length) {
+      body.innerHTML = stat + '<div class="loading">暂无选号记录，先去生成一注吧～</div>';
+      return;
+    }
+    const list = rows.map(r => {
+      const typeName   = TYPE_LABELS[r.type] || r.type;
+      const schemeName = (SCHEMES[r.scheme] && SCHEMES[r.scheme].name) || r.scheme || '—';
+      const myNums     = fmtNums(r.type, r.red, r.blue);
+      const resNums    = (r.res_red || r.res_blue)
+        ? fmtNums(r.type, r.res_red, r.res_blue)
+        : '<span style="color:#999">待开奖</span>';
+      let lv;
+      if (r.status === 'pending')      lv = '<span class="lv-pending">待开奖</span>';
+      else if (r.prize_level > 0)      lv = `<span class="lv-win">${prizeLabel(r.type, r.prize_level)}</span>`;
+      else                             lv = '<span class="lv-none">未中奖</span>';
+      const amt = r.prize_amount > 0 ? `<span class="amt">¥${Number(r.prize_amount).toLocaleString()}</span>` : '—';
+      return `<div class="history-item">
+        <div class="hi-top"><span class="hi-type">${typeName}</span><span class="hi-issue">第${esc(r.issue)}期</span><span class="hi-scheme">${esc(schemeName)}</span></div>
+        <div class="hi-nums"><span class="hi-label">我的</span>${myNums}</div>
+        <div class="hi-nums"><span class="hi-label">开奖</span>${resNums}</div>
+        <div class="hi-bottom"><span>${lv}</span><span>${amt}</span></div>
+      </div>`;
+    }).join('');
+    body.innerHTML = stat + `<div class="history-list">${list}</div>`;
+  } catch (e) {
+    body.innerHTML = '<div class="loading">加载失败，请确认后端接口已部署可访问</div>';
+  }
+}
+function closeHistory() { document.getElementById('historyModal').classList.remove('show'); }
+document.getElementById('openHistory').addEventListener('click', showHistory);
 
 document.getElementById('genBtn').addEventListener('click', generatePick);
 

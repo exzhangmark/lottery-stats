@@ -222,4 +222,28 @@ if ($action === 'rules') {
     exit;
 }
 
+// ---------- 中奖历史：最近 100 条选号存档（含当期开奖号码 + 累计中奖金额）----------
+if ($action === 'history') {
+    $limit = 100;
+    $stmt = $pdo->prepare(
+        "SELECT p.type, p.issue, p.red, p.blue, p.scheme, p.prize_level, p.prize_amount, p.status, p.created_at,
+                r.red AS res_red, r.blue AS res_blue
+         FROM picks p
+         LEFT JOIN results r ON r.type=p.type AND r.issue=p.issue
+         ORDER BY p.created_at DESC, p.id DESC
+         LIMIT ?"
+    );
+    $stmt->execute([$limit]);
+    $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
+    $totalAmount = 0;
+    foreach ($rows as $r) { $totalAmount += (int)$r['prize_amount']; }
+    echo json_encode([
+        'code'         => 1,
+        'data'         => $rows,
+        'total_amount' => $totalAmount,
+        'count'        => count($rows),
+    ]);
+    exit;
+}
+
 echo json_encode(['code' => 400, 'msg' => 'action 参数错误']);
