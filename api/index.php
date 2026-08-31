@@ -34,7 +34,9 @@ if ($action === 'list') {
         $params[] = $win['start'];
         if ($win['end']) { $where .= " AND open_time < ?"; $params[] = $win['end']; }
     }
-    $total = (int)$pdo->prepare("SELECT COUNT(*) FROM results $where")->execute($params)->fetchColumn();
+    $stmt = $pdo->prepare("SELECT COUNT(*) FROM results $where");
+    $stmt->execute($params);
+    $total = (int)$stmt->fetchColumn();
     $offset = ($page - 1) * $pageSize;
     $stmt = $pdo->prepare("SELECT issue, red, blue, open_time FROM results $where ORDER BY issue DESC LIMIT ? OFFSET ?");
     $stmt->execute(array_merge($params, [(int)$pageSize, (int)$offset]));

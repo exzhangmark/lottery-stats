@@ -224,8 +224,18 @@ function notifyConfig()
 {
     static $cfg = null;
     if ($cfg !== null) return $cfg;
-    $file = __DIR__ . '/notify_config.php';
-    if (file_exists($file)) {
+    // 兼容两种部署布局：
+    //   1) notify_config.php 与 lib.php 同级（推荐，webroot 内）
+    //   2) notify_config.php 在 lib.php 的上级目录（本地开发常见）
+    $candidates = [
+        __DIR__ . '/notify_config.php',
+        dirname(__DIR__) . '/notify_config.php',
+    ];
+    $file = null;
+    foreach ($candidates as $c) {
+        if (file_exists($c)) { $file = $c; break; }
+    }
+    if ($file) {
         $cfg = require $file;
     } else {
         $cfg = ['enabled' => false, 'owner_key' => '', 'default_scheme' => 'cold'];

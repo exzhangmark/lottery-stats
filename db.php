@@ -6,6 +6,10 @@
  */
 
 // ---------- 数据库 ----------
+// 防御：部分服务器未配 date.timezone 且 display_errors=On，date() 会输出警告污染 JSON。
+// 这里统一设一个时区，避免任何请求路径上的 date() 产生污染输出。
+date_default_timezone_set('Asia/Shanghai');
+
 function db()
 {
     static $pdo;
