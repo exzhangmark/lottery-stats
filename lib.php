@@ -593,7 +593,9 @@ function maybePushReminder()
         $stmt->execute([$k]);
         $done = $stmt->fetchColumn();
         if ($done === $date) continue;   // 当天已推，跳过
-        $name = $type === 'ssq' ? '福利双色球' : '体彩大乐透';
+        $name = $type === 'ssq' ? '福利彩票双色球' : '体彩彩票大乐透';
+        $hongqiu = $type === 'ssq' ? '红球' : '前区';
+        $lanqiu = $type === 'ssq' ? '蓝球' : '后区';
         $cnt = 0;
         foreach (allRecipients() as $rc) {
             $scheme = $rc['scheme'] ?? 'cold';
@@ -603,8 +605,8 @@ function maybePushReminder()
             $schemeName = SCHEME_NAMES[$scheme] ?? $scheme;
             $rangeName  = RANGE_LABELS[$range]  ?? $range;
             $title = "{$name} 今日开奖 · {$schemeName} 选号建议";
-            $content = "方案：{$schemeName}（统计范围：{$rangeName}）\n红球：" . implode(' ', $gen['red'])
-                . "\n蓝球：" . implode(' ', $gen['blue'])
+            $content = "方案：{$schemeName}（统计范围：{$rangeName}）\n\n{$hongqiu}：" . implode(' ', $gen['red'])
+                . "\n{$lanqiu}：" . implode(' ', $gen['blue'])
                 . ($gen['note'] ? "\n注：{$gen['note']}" : '')
                 . "\n\n开奖日 " . $date . " 7:00 推送，仅供参考";
             $res = xizhiSend($rc['key'], $title, $content);
