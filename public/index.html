@@ -241,6 +241,7 @@
   .hi-label { color:#999; font-size:12px; min-width:34px; }
   .hi-bottom { display:flex; justify-content:space-between; align-items:center; margin-top:5px; }
   .hi-bottom .amt { color:#e74c3c; font-weight:bold; font-size:14px; }
+  .hi-bottom .hi-time { color:#888; font-size:12px; }
   .lv-win { color:#e74c3c; font-weight:bold; }
   .lv-none { color:#999; }
   .lv-pending { color:#f39c12; }
@@ -960,6 +961,12 @@ function fmtNums(type, red, blue) {
   return reds + ' <span style="color:#999">+</span> ' + blues;
 }
 // 单条选号记录卡片
+function fmtPickTime(s) {
+  if (!s) return '—';
+  const m = /^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2})/.exec(s);
+  return m ? `${m[2]}-${m[3]} ${m[4]}:${m[5]}` : s;
+}
+
 function renderPickItem(r) {
   const typeName   = TYPE_LABELS[r.type] || r.type;
   const schemeName = (SCHEMES[r.scheme] && SCHEMES[r.scheme].name) || r.scheme || '—';
@@ -972,11 +979,12 @@ function renderPickItem(r) {
   else if (r.prize_level > 0)   lv = `<span class="lv-win">${prizeLabel(r.type, r.prize_level)}</span>`;
   else                          lv = '<span class="lv-none">未中奖</span>';
   const amt = r.prize_amount > 0 ? `<span class="amt">¥${Number(r.prize_amount).toLocaleString()}</span>` : '—';
+  const time = `<span class="hi-time">生成 ${fmtPickTime(r.created_at)}</span>`;
   return `<div class="history-item">
     <div class="hi-top"><span class="hi-type">${typeName}</span><span class="hi-issue">第${esc(r.issue)}期</span><span class="hi-scheme">${esc(schemeName)}</span></div>
     <div class="hi-nums"><span class="hi-label">我的</span>${myNums}</div>
     <div class="hi-nums"><span class="hi-label">开奖</span>${resNums}</div>
-    <div class="hi-bottom"><span>${lv}</span><span>${amt}</span></div>
+    <div class="hi-bottom"><span>${lv}</span>${time}<span>${amt}</span></div>
   </div>`;
 }
 // 奖级统计：一/二等奖只统计注数（浮动奖无定额），三等奖起显示「注数/共X元」

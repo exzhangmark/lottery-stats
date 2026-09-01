@@ -688,7 +688,10 @@ function incIssue($issue)
 }
 
 // 推算下一期期号：直接基于 results 中最新一期【官方真实期号】 +1（与官方完全对齐）
-// 仅在没有任何开奖数据时回退到「按日期推算」做兜底
+// 规则：候选期 = 最近期 +1；若该候选期已存在于 results（说明已开奖），则再 +1 才是真正待开奖的下一期。
+// 这样在「开奖日 20 点后 ~ 开奖前」窗口（数据库尚未抓到当天期，最近期仍是上一期）生成的选号，
+// 目标期号 = 当天期（仅 +1），而不会因数据库未更新而误跳到下一期。
+// 仅在没有任何开奖数据时回退到「按日期推算」做兜底。
 function getNextIssue($type)
 {
     $pdo = db();
@@ -700,7 +703,14 @@ function getNextIssue($type)
         if (!$next) return null;
         return issueForDate($type, $next);
     }
-    return incIssue($last);
+    $candidate = incIssue($last);
+    // 候选期若已开奖（已存在于 results），则真正待开奖的下一期 = candidate +1
+    $chk = $pdo->prepare("SELECT 1 FROM results WHERE type=? AND issue=?");
+    $chk->execute([$type, $candidate]);
+    if ($chk->fetchColumn()) {
+        $candidate = incIssue($candidate);
+    }
+    return $candidate;
 }
 
 // 保存一次选号存档（自动推算目标期号）。返回 ['ok','issue','id','msg']
