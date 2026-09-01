@@ -474,6 +474,9 @@
 <script>
 const apiBase = '/api/index.php';
 
+// 兜底：页面加载即触发一次开奖抓取 + 开奖结果推送（服务端 5 分钟节流，fire-and-forget，不阻塞渲染）
+fetch(`${apiBase}?action=fetch`).catch(() => {});
+
 // 当前选中的彩种 / 时间范围 / 分页状态
 let currentType    = 'ssq';
 let currentRange   = 'earliest';

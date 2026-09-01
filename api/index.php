@@ -23,6 +23,31 @@ if (in_array($action, ['list', 'stats'], true) && !in_array($type, ['ssq', 'dlt'
 
 $pdo = db();
 
+// 兜底抓取：网站被访问即触发开奖抓取 + 开奖结果推送。
+// 即使 lottery_worker.php 常驻进程 / crontab 兜底脚本都没运行，这也能保证开奖结果推送（服务端 5 分钟节流）。
+if ($action === 'fetch') {
+    ignore_user_abort(true);   // 前端 fire-and-forget 断开后仍完成本次抓取+推送
+    set_time_limit(0);
+    try {
+        $now  = time();
+        $stmt = $pdo->prepare("SELECT v FROM meta WHERE k='last_web_fetch'");
+        $stmt->execute();
+        $last = $stmt->fetchColumn();
+        $last = $last ? (int)$last : 0;
+        if ($now - $last >= 300) {
+            $pdo->prepare("INSERT OR REPLACE INTO meta(k,v) VALUES('last_web_fetch',?)")->execute([$now]);
+            fetchLatest('ssq');
+            fetchLatest('dlt');
+            echo json_encode(['code' => 1, 'msg' => '已抓取并推送最新开奖结果']);
+        } else {
+            echo json_encode(['code' => 1, 'msg' => '节流中，跳过本次抓取']);
+        }
+    } catch (\Throwable $e) {
+        echo json_encode(['code' => 0, 'msg' => '抓取失败：' . $e->getMessage()]);
+    }
+    exit;
+}
+
 if ($action === 'list') {
     $range    = $_GET['range'] ?? 'all';
     $page     = max(1, (int)($_GET['page'] ?? 1));
