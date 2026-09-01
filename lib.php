@@ -673,17 +673,34 @@ function issueForDate($type, $dateStr)
     return $year . str_pad($cnt, 3, '0', STR_PAD_LEFT);
 }
 
-// 推算下一期期号（基于 results 中最新开奖时间；若无数据则用今天）
+// 期号 +1（保留年份前缀）：'2026097' -> '2026098'，'26096' -> '26097'
+// 跨年（期号超过单年自然上限 ~160）时年份进一、期号归 001
+function incIssue($issue)
+{
+    if (!preg_match('/^(.*?)(\d{3})$/', $issue, $m)) return $issue;
+    $prefix = $m[1];
+    $num = (int)$m[2] + 1;
+    if ($num > 160) {
+        $prefix = (string)((int)$prefix + 1);
+        $num = 1;
+    }
+    return $prefix . str_pad($num, 3, '0', STR_PAD_LEFT);
+}
+
+// 推算下一期期号：直接基于 results 中最新一期【官方真实期号】 +1（与官方完全对齐）
+// 仅在没有任何开奖数据时回退到「按日期推算」做兜底
 function getNextIssue($type)
 {
     $pdo = db();
-    $stmt = $pdo->prepare("SELECT open_time FROM results WHERE type=? ORDER BY issue DESC LIMIT 1");
+    $stmt = $pdo->prepare("SELECT issue FROM results WHERE type=? ORDER BY issue DESC LIMIT 1");
     $stmt->execute([$type]);
     $last = $stmt->fetchColumn();
-    $base = $last ? substr($last, 0, 10) : date('Y-m-d');
-    $next = nextDrawDate($type, $base);
-    if (!$next) return null;
-    return issueForDate($type, $next);
+    if (!$last) {
+        $next = nextDrawDate($type, date('Y-m-d'));
+        if (!$next) return null;
+        return issueForDate($type, $next);
+    }
+    return incIssue($last);
 }
 
 // 保存一次选号存档（自动推算目标期号）。返回 ['ok','issue','id','msg']
@@ -806,6 +823,13 @@ function maybePushReminder()
             // 优先用订阅者自己选的时间范围，其次站点默认范围
             $range = $rc['stat_range'] ?? ($cfg['default_range'] ?? 'earliest');
             $gen = generateNumbers($type, $scheme, $range);
+            // 将今日推送的选号同步入库（开奖后按 issue 核对中奖）
+            try {
+                $save = savePick($type, $gen['red'], $gen['blue'], $scheme);
+            } catch (\Throwable $e) {
+                $save = ['ok' => false, 'msg' => '异常:' . $e->getMessage()];
+            }
+            $saveMsg = $save['ok'] ? ("已入库 第{$save['issue']}期") : ("入库失败：" . $save['msg']);
             $schemeName = SCHEME_NAMES[$scheme] ?? $scheme;
             $rangeName  = RANGE_LABELS[$range]  ?? $range;
             $title = "{$name} 今日开奖 · {$schemeName} 选号建议";
@@ -815,7 +839,7 @@ function maybePushReminder()
                 . "\n\n开奖日 " . $date . " 7:00 推送，仅供参考";
             $res = xizhiSend($rc['key'], $title, $content);
             echo date('Y-m-d H:i:s') . " [reminder] {$type}/{$scheme}/{$range} → "
-                . ($res['ok'] ? 'OK' : 'FAIL ' . $res['msg']) . "\n";
+                . ($res['ok'] ? 'OK' : 'FAIL ' . $res['msg']) . " | {$saveMsg}\n";
             $cnt++;
         }
         $pdo->prepare("INSERT INTO meta(k,v) VALUES(?,?) ON CONFLICT(k) DO UPDATE SET v=excluded.v")
