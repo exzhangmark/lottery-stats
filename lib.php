@@ -812,10 +812,21 @@ function pushDrawResult($type, $row)
     $cfg = notifyConfig();
     if (empty($cfg['enabled'])) return;
     $name    = $type === 'ssq' ? '福利双色球' : '体彩大乐透';
+    $hong    = $type === 'ssq' ? '红球' : '前区';
+    $lan     = $type === 'ssq' ? '蓝球' : '后区';
+    // 开奖时间：日期后附中文星期（周X），与号码分两行展示
+    $weekNames = ['日', '一', '二', '三', '四', '五', '六'];
+    $ot = $row['open_time'] ?? '';
+    if (preg_match('/^(\d{4}-\d{2}-\d{2})(?:[ T](\d{2}:\d{2}(?::\d{2})?))?/', $ot, $m)) {
+        $w = $weekNames[(int)date('w', strtotime($m[1]))];
+        $openShow = $m[1] . '（周' . $w . '）' . (isset($m[2]) ? ' ' . $m[2] : '');
+    } else {
+        $openShow = $ot;
+    }
     $title   = "{$name} 第 {$row['issue']} 期开奖结果";
-    $content = "红球：" . str_replace(',', ' ', $row['red'])
-        . "\n蓝球：" . str_replace(',', ' ', $row['blue'])
-        . "\n开奖时间：" . ($row['open_time'] ?? '');
+    $content = "{$hong}：" . str_replace(',', ' ', $row['red'])
+        . "\n{$lan}：" . str_replace(',', ' ', $row['blue'])
+        . "\n\n开奖时间：" . $openShow;
     foreach (allRecipients(true) as $rc) {
         $res = xizhiSend($rc['key'], $title, $content);
         echo date('Y-m-d H:i:s') . " [notify] 开奖推送 {$type} 第{$row['issue']}期 → "
