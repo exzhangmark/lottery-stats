@@ -214,10 +214,15 @@ function fetchLatest($type)
         // 改为按 results.result_notified 标记逐期推送：只要还没推过就一定会推（自愈），且每期仅推一次。
         $pdo = db();
         $cutoff = date('Y-m-d H:i:s', strtotime('-7 days'));
+        // 部分数据源（如 cwl.gov.cn 双色球）会一次性返回全量历史（数千行），
+        // 若对其逐期执行 checkWinsForIssue 会造成大量无意义 DB 查询并拖慢脚本。
+        // 因此只保留「近 7 天内」的期号用于推送与核对（新开奖必在此窗口内）。
+        $recent = array_filter($rows, function ($r) use ($cutoff) {
+            return empty($r['open_time']) || $r['open_time'] >= $cutoff;
+        });
         $nPush = 0;
-        foreach ($rows as $r) {
+        foreach ($recent as $r) {
             if (empty($r['issue'])) continue;
-            if (!empty($r['open_time']) && $r['open_time'] < $cutoff) continue; // 仅推近 7 天，避免回溯远古历史刷屏
             $chk = $pdo->prepare("SELECT result_notified FROM results WHERE type=? AND issue=?");
             $chk->execute([$type, $r['issue']]);
             if ((int)$chk->fetchColumn() === 1) continue;
@@ -226,8 +231,8 @@ function fetchLatest($type)
             if (++$nPush >= 10) break; // 单次最多补推 10 期，防刷屏
         }
         if ($nPush > 0) echo date('Y-m-d H:i:s') . " [{$type}] 已推送开奖结果 {$nPush} 期\n";
-        // 每期开奖后，核对针对该期的选号存档并更新中奖结果
-        foreach ($rows as $r) {
+        // 每期开奖后，核对针对该期的选号存档并更新中奖结果（仅近 7 天）
+        foreach ($recent as $r) {
             if (!empty($r['issue'])) {
                 $u = checkWinsForIssue($type, $r['issue'], $r['red'], $r['blue']);
                 if ($u > 0) echo date('Y-m-d H:i:s') . " [{$type}] 第 {$r['issue']} 期核对选号存档 {$u} 条\n";
