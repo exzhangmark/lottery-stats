@@ -80,6 +80,8 @@ function db()
     // 兼容旧库：已存在 picks 表但缺新列时补上（列已存在则忽略报错）
     try { $pdo->exec("ALTER TABLE picks ADD COLUMN status TEXT NOT NULL DEFAULT 'pending'"); } catch (\Throwable $e) { /* 忽略 */ }
     try { $pdo->exec("ALTER TABLE picks ADD COLUMN checked_at TEXT"); } catch (\Throwable $e) { /* 忽略 */ }
+    // 兼容旧库：results 表缺 result_notified 列时补上（开奖结果「是否已推送」标记，用于可靠推送、避免漏推）
+    try { $pdo->exec("ALTER TABLE results ADD COLUMN result_notified INTEGER NOT NULL DEFAULT 0"); } catch (\Throwable $e) { /* 列已存在，忽略 */ }
 
     // 通用键值表：用于记录「提醒推送防重复」的日期标记等
     $pdo->exec("CREATE TABLE IF NOT EXISTS meta (

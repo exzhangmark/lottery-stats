@@ -396,25 +396,25 @@
 <div class="main">
   <div class="lottery-area">
     <section class="panel active" id="panel-ssq">
-      <div class="section-title">红球出现次数（1-33）</div>
-      <div class="balls" id="ssq-red"></div>
-      <div class="section-title">蓝球出现次数（1-16）</div>
-      <div class="balls" id="ssq-blue"></div>
       <div class="section-title">开奖列表</div>
       <table><thead><tr><th>期号</th><th>红球</th><th>蓝球</th><th>开奖时间</th></tr></thead>
         <tbody id="ssq-list"><tr><td colspan="4" class="loading">加载中...</td></tr></tbody></table>
       <div class="pager" id="ssq-pager"></div>
+      <div class="section-title">红球出现次数（1-33）</div>
+      <div class="balls" id="ssq-red"></div>
+      <div class="section-title">蓝球出现次数（1-16）</div>
+      <div class="balls" id="ssq-blue"></div>
     </section>
 
     <section class="panel" id="panel-dlt">
-      <div class="section-title">前区出现次数（1-35）</div>
-      <div class="balls" id="dlt-red"></div>
-      <div class="section-title">后区出现次数（1-12）</div>
-      <div class="balls" id="dlt-blue"></div>
       <div class="section-title">开奖列表</div>
       <table><thead><tr><th>期号</th><th>前区</th><th>后区</th><th>开奖时间</th></tr></thead>
         <tbody id="dlt-list"><tr><td colspan="4" class="loading">加载中...</td></tr></tbody></table>
       <div class="pager" id="dlt-pager"></div>
+      <div class="section-title">前区出现次数（1-35）</div>
+      <div class="balls" id="dlt-red"></div>
+      <div class="section-title">后区出现次数（1-12）</div>
+      <div class="balls" id="dlt-blue"></div>
     </section>
   </div>
 </div>
@@ -481,7 +481,7 @@ fetch(`${apiBase}?action=fetch`).catch(() => {});
 let currentType    = 'ssq';
 let currentRange   = 'earliest';
 let currentPage    = 1;
-let currentPageSize = 20;
+let currentPageSize = 10;
 const statsLoaded = new Set();   // 已加载过的 (type:range) 统计组合，避免重复请求
 const statsCache  = {};          // (type:range) -> stats 响应数据，供选号生成复用
 

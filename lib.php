@@ -208,10 +208,24 @@ function fetchLatest($type)
         }
         $saved = saveRows($type, $rows);
         echo date('Y-m-d H:i:s') . " [{$type}] {$api['name']} 成功，抓取 " . count($rows) . " 期，新增 {$saved} 期\n";
-        // 抓到新增开奖数据 → 通过息知推送最新一期给 owner + 所有订阅者。rows[0] 为该页最新一期。
-        if ($saved > 0 && !empty($rows[0])) {
-            pushDrawResult($type, $rows[0]);
+        // 开奖结果推送：以「是否已推送」标记为准，而非仅「是否新增」。
+        // 旧逻辑只在 $saved>0（新增期）时推，导致：若某期先被抓进库（网站访问触发 action=fetch /
+        // worker 早先抓过），$saved 后续变 0，推送永久不触发 →「入库了却没推」。
+        // 改为按 results.result_notified 标记逐期推送：只要还没推过就一定会推（自愈），且每期仅推一次。
+        $pdo = db();
+        $cutoff = date('Y-m-d H:i:s', strtotime('-7 days'));
+        $nPush = 0;
+        foreach ($rows as $r) {
+            if (empty($r['issue'])) continue;
+            if (!empty($r['open_time']) && $r['open_time'] < $cutoff) continue; // 仅推近 7 天，避免回溯远古历史刷屏
+            $chk = $pdo->prepare("SELECT result_notified FROM results WHERE type=? AND issue=?");
+            $chk->execute([$type, $r['issue']]);
+            if ((int)$chk->fetchColumn() === 1) continue;
+            pushDrawResult($type, $r);
+            $pdo->prepare("UPDATE results SET result_notified=1 WHERE type=? AND issue=?")->execute([$type, $r['issue']]);
+            if (++$nPush >= 10) break; // 单次最多补推 10 期，防刷屏
         }
+        if ($nPush > 0) echo date('Y-m-d H:i:s') . " [{$type}] 已推送开奖结果 {$nPush} 期\n";
         // 每期开奖后，核对针对该期的选号存档并更新中奖结果
         foreach ($rows as $r) {
             if (!empty($r['issue'])) {
