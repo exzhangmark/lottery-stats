@@ -815,6 +815,7 @@ function pushDrawResult($type, $row)
         $res = xizhiSend($rc['key'], $title, $content);
         echo date('Y-m-d H:i:s') . " [notify] 开奖推送 {$type} 第{$row['issue']}期 → "
             . ($res['ok'] ? 'OK' : 'FAIL ' . $res['msg']) . "\n";
+        usleep(800000); // 每条之间间隔 0.8s，避免触发息知访问频率限制
     }
 }
 
